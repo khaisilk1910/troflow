@@ -166,13 +166,12 @@ def legacy_scope_check(con,request,user,body):
     '''
     path=request.url.path
     method=request.method
-    job=user.get('job_role','manager')
     if path.startswith('/api/auth/'):
         return  # Any authenticated user may log out/change their own password.
     if path.startswith('/api/v2/'):
         return  # V2 endpoints apply their own property and capability checks.
     if method in ('GET','HEAD'):
-        if path.startswith('/api/export/') and (user['grant_ids'] or job not in ('manager','accountant')):
+        if path.startswith('/api/export/') and user['grant_ids']:
             fail('Xuất dữ liệu toàn hệ thống cần quyền quản lý.',403)
         if path=='/api/readings/previous' and user['grant_ids']:
             rid=request.query_params.get('room_id')
@@ -180,17 +179,14 @@ def legacy_scope_check(con,request,user,body):
             if not found or found['property_id'] not in user['grant_ids']:
                 fail('Không có quyền xem chỉ số phòng này.',403)
         return
-    if job=='viewer':fail('Tài khoản này chỉ được xem dữ liệu.',403)
-    allowed={'manager':('rooms','tenants','contracts','readings','invoices','payments','expenses','tickets'),
-             'accountant':('readings','invoices','payments','expenses'),
-             'collector':('payments',),
-             'maintenance':('readings','tickets')}
-    parts=path.strip('/').split('/')
-    entity=parts[1] if len(parts)>1 else ''
-    if entity not in allowed.get(job,()):fail('Không có quyền với nghiệp vụ này.',403)
     grants=user['grant_ids']
     if not grants:return
+    parts=path.strip('/').split('/')
+    entity=parts[1] if len(parts)>1 else ''
     property_id=body.get('property_id')
+    if entity=='properties':
+        if len(parts)>2 and parts[2].isdigit():
+            property_id=int(parts[2])
     if entity in ('rooms','expenses'):
         if len(parts)>2 and parts[2].isdigit():
             current=one(con,f'SELECT property_id FROM {entity} WHERE id=?',(int(parts[2]),))
@@ -218,6 +214,9 @@ def legacy_scope_check(con,request,user,body):
         property_id=found['property_id'] if found else None
     elif entity=='payments':
         iid=body.get('invoice_id')
+        if not iid and len(parts)>2 and parts[2].isdigit():
+            linked=one(con,'SELECT invoice_id FROM payments WHERE id=?',(int(parts[2]),))
+            iid=linked['invoice_id'] if linked else None
         if iid:
             found=one(con,'SELECT r.property_id FROM invoices i JOIN rooms r ON r.id=i.room_id WHERE i.id=?',(iid,))
             property_id=found['property_id'] if found else None
@@ -225,6 +224,9 @@ def legacy_scope_check(con,request,user,body):
         rid=body.get('room_id')
         if rid:
             found=one(con,'SELECT property_id FROM rooms WHERE id=?',(rid,))
+            property_id=found['property_id'] if found else None
+        elif len(parts)>2 and parts[2].isdigit():
+            found=one(con,'SELECT r.property_id FROM invoices i JOIN rooms r ON r.id=i.room_id WHERE i.id=?',(int(parts[2]),))
             property_id=found['property_id'] if found else None
         # 'generate all' must not create outside the assigned property.
     if property_id is None or int(property_id) not in grants:
@@ -242,6 +244,12 @@ async def authorized(request: Request):
         if not user or not user['active']:fail('Phiên đăng nhập hết hạn.',401)
         user['grant_ids']=[r['property_id'] for r in rows(con,
               'SELECT property_id FROM property_grants WHERE user_id=?',(user['id'],))]
+        from .permissions import effective, route_permission
+        user['permissions']=effective(con,user)
+        capability=route_permission(request.url.path,request.method)
+        if user['role']!='admin' and request.url.path.startswith('/api/'):
+            if capability is None or not user['permissions'].get(capability,False):
+                fail('Tài khoản chưa được cấp quyền: '+str(capability or 'API'),403)
         if request.method in ('POST','PUT','PATCH','DELETE'):
             csrf=request.headers.get('x-csrf-token','')
             if not csrf or not hmac.compare_digest(csrf,user['csrf_token']):
@@ -332,7 +340,9 @@ def make_session(uid,response):
         con.execute('DELETE FROM sessions WHERE expires_at < ?', (datetime.now(timezone.utc).isoformat(),))
         con.execute('INSERT INTO sessions(token_hash,user_id,csrf_token,expires_at) VALUES(?,?,?,?)',
                     (hashlib.sha256(token.encode()).hexdigest(),uid,csrf,expiry))
-        user = one(con,'SELECT id,username,full_name,role FROM users WHERE id=?',(uid,))
+        user = one(con,'SELECT id,username,full_name,role,job_role FROM users WHERE id=?',(uid,))
+        from .permissions import effective
+        user['permissions']=effective(con,user)
     response.set_cookie(COOKIE_NAME,token,max_age=43200,path='/',httponly=True,secure=COOKIE_SECURE,samesite='strict')
     return {'user':user,'csrf':csrf}
 
@@ -355,7 +365,7 @@ def login(data: dict, request: Request,response: Response):
 
 @app.get('/api/auth/me')
 def me(user=Depends(authorized)):
-    return {'user':{k:user[k] for k in ('id','username','full_name','role','job_role')},'csrf':user['csrf_token']}
+    return {'user':{**{k:user[k] for k in ('id','username','full_name','role','job_role')},'permissions':user['permissions']},'csrf':user['csrf_token']}
 
 @app.post('/api/auth/logout')
 def logout(request: Request,response: Response,user=Depends(authorized)):
@@ -402,7 +412,7 @@ def add_property(data:dict,user=Depends(admin_user)):
     return json_ok(id=ident)
 
 @app.put('/api/properties/{ident}')
-def edit_property(ident:int,data:dict,user=Depends(admin_user)):
+def edit_property(ident:int,data:dict,user=Depends(authorized)):
     vals=dict(name=trim(data.get('name'),'tên cơ sở',120,True),address=trim(data.get('address'),'địa chỉ',250),
               manager_phone=trim(data.get('manager_phone'),'điện thoại',30),
               electric_rate=positive(data.get('electric_rate',0),'Giá điện'),
@@ -414,7 +424,7 @@ def edit_property(ident:int,data:dict,user=Depends(admin_user)):
     return json_ok()
 
 @app.delete('/api/properties/{ident}')
-def delete_property(ident:int,user=Depends(admin_user)):
+def delete_property(ident:int,user=Depends(authorized)):
     try:
         with tx() as con:
             con.execute('DELETE FROM properties WHERE id=?',(ident,))
@@ -473,7 +483,7 @@ def edit_room(ident:int,data:dict,user=Depends(authorized)):
     return json_ok()
 
 @app.delete('/api/rooms/{ident}')
-def delete_room(ident:int,user=Depends(admin_user)):
+def delete_room(ident:int,user=Depends(authorized)):
     try:
         with tx() as con:
             cur=con.execute('DELETE FROM rooms WHERE id=?',(ident,))
@@ -512,7 +522,7 @@ def edit_tenant(ident:int,data:dict,user=Depends(authorized)):
     return json_ok()
 
 @app.delete('/api/tenants/{ident}')
-def delete_tenant(ident:int,user=Depends(admin_user)):
+def delete_tenant(ident:int,user=Depends(authorized)):
     try:
         with tx() as con:
             cur=con.execute('DELETE FROM tenants WHERE id=?',(ident,))
@@ -573,7 +583,7 @@ def edit_contract(ident:int,data:dict,user=Depends(authorized)):
         current=one(con,'SELECT * FROM contracts WHERE id=?',(ident,))
         if not current: fail('Không tìm thấy hợp đồng.',404)
         if current['status']=='ended': fail('Không thể chỉnh sửa hợp đồng đã kết thúc.')
-        if one(con,'SELECT id FROM invoices WHERE contract_id=? LIMIT 1',(ident,)):
+        if one(con,'SELECT id FROM invoices WHERE contract_id=? LIMIT 1',(ident,)) or one(con,'SELECT id FROM rent_coverage WHERE contract_id=? LIMIT 1',(ident,)):
             if vals['start_date']!=current['start_date'] or vals['monthly_rent']!=current['monthly_rent']:
                 fail('Hợp đồng đã phát sinh hóa đơn: không thể sửa ngày bắt đầu/giá thuê.')
         update(con,'contracts',ident,vals)
@@ -592,7 +602,8 @@ def end_contract(ident:int,user=Depends(authorized)):
         unpaid=one(con,'''SELECT COALESCE(SUM(i.total-COALESCE(p.paid,0)),0) n
                      FROM invoices i LEFT JOIN (SELECT invoice_id,SUM(amount) paid FROM payments GROUP BY invoice_id) p
                      ON p.invoice_id=i.id WHERE i.contract_id=? AND i.status='published' ''',(ident,))['n']
-        if held or unpaid:
+        future=one(con,'''SELECT COUNT(*) n FROM rent_coverage WHERE contract_id=? AND period>? AND status='active' ''',(ident,date.today().strftime('%Y-%m')))['n']
+        if held or unpaid or future:
             fail('Hợp đồng còn tiền cọc hoặc công nợ. Vui lòng dùng TrọFlow Nâng cao → Bàn giao phòng để quyết toán.')
         con.execute("UPDATE contracts SET status='ended' WHERE id=?",(ident,))
         con.execute('UPDATE contract_residents SET moved_out=? WHERE contract_id=? AND moved_out IS NULL',
@@ -600,8 +611,22 @@ def end_contract(ident:int,user=Depends(authorized)):
         audit(con,user,'end','contract',ident)
     return json_ok()
 
+def occupied_contract(con, room_id, period):
+    """Require a real tenant with a contract overlapping the requested billing month."""
+    period=period_str(period)
+    last=f'{period}-{calendar.monthrange(*map(int,period.split("-")))[1]:02d}'
+    return one(con,'''SELECT c.id,c.tenant_id,t.full_name tenant_name,t.phone tenant_phone
+         FROM contracts c JOIN tenants t ON t.id=c.tenant_id
+         WHERE c.room_id=? AND c.start_date<=? AND c.end_date>=?
+         ORDER BY CASE c.status WHEN 'active' THEN 0 ELSE 1 END,c.id DESC LIMIT 1''',
+         (room_id,last,period+'-01'))
+
 READING_SQL = '''SELECT d.*,r.code room_code,r.property_id,p.name property_name,
-                 (d.electric_new-d.electric_old) electric_usage,(d.water_new-d.water_old) water_usage
+                 (d.electric_new-d.electric_old) electric_usage,(d.water_new-d.water_old) water_usage,
+                 (SELECT t.full_name FROM contracts c JOIN tenants t ON t.id=c.tenant_id
+                  WHERE c.room_id=d.room_id AND c.start_date<=date(d.period||'-01','start of month','+1 month','-1 day')
+                   AND c.end_date>=d.period||'-01'
+                  ORDER BY CASE c.status WHEN 'active' THEN 0 ELSE 1 END,c.id DESC LIMIT 1) tenant_name
                  FROM readings d JOIN rooms r ON r.id=d.room_id
                  JOIN properties p ON p.id=r.property_id'''
 @app.get('/api/readings')
@@ -620,6 +645,8 @@ def save_reading(data:dict,user=Depends(authorized)):
     if en<eo or wn<wo: fail('Chỉ số mới không được nhỏ hơn chỉ số cũ.')
     with tx() as con:
         exists(con,'rooms',room_id)
+        if not occupied_contract(con,room_id,period):
+            fail('Phòng chưa có người thuê / hợp đồng trong kỳ đã chọn; không thể ghi chỉ số.')
         record=one(con,'SELECT id FROM readings WHERE room_id=? AND period=?',(room_id,period))
         if record:
             if one(con,'SELECT id FROM invoices WHERE room_id=? AND period=?',(room_id,period)):
@@ -687,7 +714,7 @@ def generate(data:dict,user=Depends(authorized)):
     return json_ok(created=len(ids),ids=ids)
 
 @app.delete('/api/invoices/{ident}')
-def delete_invoice(ident:int,user=Depends(admin_user)):
+def delete_invoice(ident:int,user=Depends(authorized)):
     try:
         with tx() as con:
             if not one(con,'SELECT id FROM invoices WHERE id=?',(ident,)):
@@ -727,7 +754,7 @@ def add_payment(data:dict,user=Depends(authorized)):
     return json_ok(id=ident)
 
 @app.delete('/api/payments/{ident}')
-def delete_payment(ident:int,user=Depends(admin_user)):
+def delete_payment(ident:int,user=Depends(authorized)):
     with tx() as con:
         cur=con.execute('DELETE FROM payments WHERE id=?',(ident,))
         if not cur.rowcount: fail('Không tìm thấy giao dịch.',404)
@@ -770,7 +797,7 @@ def edit_expense(ident:int,data:dict,user=Depends(authorized)):
     return json_ok()
 
 @app.delete('/api/expenses/{ident}')
-def delete_expense(ident:int,user=Depends(admin_user)):
+def delete_expense(ident:int,user=Depends(authorized)):
     with tx() as con:
         cur=con.execute('DELETE FROM expenses WHERE id=?',(ident,))
         if not cur.rowcount: fail('Không tìm thấy phiếu chi.',404)
@@ -818,12 +845,28 @@ def edit_ticket(ident:int,data:dict,user=Depends(authorized)):
     return json_ok()
 
 @app.delete('/api/tickets/{ident}')
-def delete_ticket(ident:int,user=Depends(admin_user)):
+def delete_ticket(ident:int,user=Depends(authorized)):
     with tx() as con:
         cur=con.execute('DELETE FROM tickets WHERE id=?',(ident,))
         if not cur.rowcount: fail('Không tìm thấy sự cố.',404)
         audit(con,user,'delete','ticket',ident)
     return json_ok()
+
+def rent_advance_cash(con,period,property_ids=None):
+    # Actual cash movement on receipt/refund dates, not accrual invoice revenue.
+    params=[period]
+    where=''
+    if property_ids is not None:
+        if not property_ids:return 0
+        where=' AND r.property_id IN ('+','.join('?' for _ in property_ids)+')'
+        params+=list(property_ids)
+    received=one(con,'''SELECT COALESCE(SUM(b.total),0) n FROM rent_prepayment_batches b
+        JOIN contracts c ON c.id=b.contract_id JOIN rooms r ON r.id=c.room_id
+        WHERE substr(b.paid_on,1,7)=?'''+where,tuple(params))['n']
+    refunds=one(con,'''SELECT COALESCE(SUM(x.amount),0) n FROM rent_coverage x
+        JOIN contracts c ON c.id=x.contract_id JOIN rooms r ON r.id=c.room_id
+        WHERE x.status='refunded' AND substr(x.refunded_on,1,7)=?'''+where,tuple(params))['n']
+    return received-refunds
 
 def scoped_dashboard(user):
     grants=user['grant_ids'];q=','.join('?' for _ in grants)
@@ -835,6 +878,7 @@ def scoped_dashboard(user):
         billed=one(con,f"SELECT COALESCE(SUM(i.total),0) n FROM invoices i JOIN rooms r ON r.id=i.room_id WHERE i.period=? AND i.status='published' AND r.property_id IN ({q})",(current,*grants))['n']
         income=one(con,f'''SELECT COALESCE(SUM(pay.amount),0) n FROM payments pay JOIN invoices i ON i.id=pay.invoice_id
             JOIN rooms r ON r.id=i.room_id WHERE substr(pay.paid_at,1,7)=? AND r.property_id IN ({q})''',(current,*grants))['n']
+        income+=rent_advance_cash(con,current,grants)
         expense=one(con,f"SELECT COALESCE(SUM(amount),0) n FROM expenses WHERE substr(spent_on,1,7)=? AND property_id IN ({q})",(current,*grants))['n']
         prop=rows(con,f"SELECT p.id,p.name,COUNT(r.id) total FROM properties p LEFT JOIN rooms r ON r.property_id=p.id WHERE p.id IN ({q}) GROUP BY p.id",grants)
         return {'rooms_total':stats['rooms_total'],'occupied':stats['occupied'] or 0,'maintenance':0,
@@ -850,11 +894,12 @@ def scoped_reports(period,grants):
         pay=rows(con,f'''SELECT pay.amount FROM payments pay JOIN invoices i ON i.id=pay.invoice_id
         JOIN rooms r ON r.id=i.room_id WHERE substr(pay.paid_at,1,7)=? AND r.property_id IN ({q})''',(period,*grants))
         expenses=rows(con,f'SELECT amount,category FROM expenses WHERE substr(spent_on,1,7)=? AND property_id IN ({q})',(period,*grants))
+        rent_cash=rent_advance_cash(con,period,grants)
     categories=defaultdict(int)
     for item in expenses:categories[item['category']]+=item['amount']
     return {'period':period,'billed':sum(x['total'] for x in inv),'paid_for_period':sum(x['paid'] for x in inv),
-         'remaining':sum(x['balance'] for x in inv),'cash_in':sum(x['amount'] for x in pay),
-         'cash_out':sum(x['amount'] for x in expenses),'net_cashflow':sum(x['amount'] for x in pay)-sum(x['amount'] for x in expenses),
+         'remaining':sum(x['balance'] for x in inv),'cash_in':sum(x['amount'] for x in pay)+rent_cash,
+         'cash_out':sum(x['amount'] for x in expenses),'net_cashflow':sum(x['amount'] for x in pay)+rent_cash-sum(x['amount'] for x in expenses),
          'invoice_count':len(inv),'unpaid_count':sum(x['balance']>0 for x in inv),
          'expenses_by_category':[{'category':k,'amount':v} for k,v in categories.items()],'invoices':inv}
 
@@ -873,6 +918,7 @@ def dashboard(user=Depends(authorized)):
             COALESCE(SUM((SELECT COALESCE(SUM(amount),0) FROM payments pay WHERE pay.invoice_id=i.id)),0) paid
             FROM invoices i WHERE period=? AND i.status='published' ''',(current,))
         cash=one(con,'SELECT COALESCE(SUM(amount),0) income FROM payments WHERE substr(paid_at,1,7)=?',(current,))
+        cash['income']+=rent_advance_cash(con,current)
         ex=one(con,'SELECT COALESCE(SUM(amount),0) amount FROM expenses WHERE substr(spent_on,1,7)=?',(current,))
         counts=one(con,'''SELECT
              (SELECT COUNT(*) FROM tickets WHERE status!='done') open_tickets,
@@ -900,6 +946,7 @@ def dashboard(user=Depends(authorized)):
             while mm<=0: mm+=12; yy-=1
             key=f'{yy:04d}-{mm:02d}'
             income=one(con,'SELECT COALESCE(SUM(amount),0) s FROM payments WHERE substr(paid_at,1,7)=?',(key,))['s']
+            income+=rent_advance_cash(con,key)
             spend=one(con,'SELECT COALESCE(SUM(amount),0) s FROM expenses WHERE substr(spent_on,1,7)=?',(key,))['s']
             trends.append({'period':key,'income':income,'expense':spend})
     return {**rooms_stat,**counts,'billed':finance['billed'],'invoice_paid':finance['paid'],
@@ -927,14 +974,15 @@ def reports(period:str,property_id:int|None=None,user=Depends(authorized)):
             payments_sql+=' AND r.property_id=?'; expenses_sql+=' AND property_id=?';params.append(property_id)
         pay=rows(con,payments_sql,tuple(params))
         expenses=rows(con,expenses_sql,tuple(params))
+        rent_cash=rent_advance_cash(con,period,[property_id] if property_id else None)
         categories=defaultdict(int)
         for item in expenses: categories[item['category']]+=item['amount']
         due=sum(x['balance'] for x in invoices)
         return {'period':period,'billed':sum(x['total'] for x in invoices),
                 'paid_for_period':sum(x['paid'] for x in invoices),
-                'remaining':due,'cash_in':sum(x['amount'] for x in pay),
+                'remaining':due,'cash_in':sum(x['amount'] for x in pay)+rent_cash,
                 'cash_out':sum(x['amount'] for x in expenses),
-                'net_cashflow':sum(x['amount'] for x in pay)-sum(x['amount'] for x in expenses),
+                'net_cashflow':sum(x['amount'] for x in pay)+rent_cash-sum(x['amount'] for x in expenses),
                 'invoice_count':len(invoices),'unpaid_count':sum(x['balance']>0 for x in invoices),
                 'expenses_by_category':[{'category':k,'amount':v} for k,v in categories.items()],
                 'invoices':invoices}
@@ -1001,6 +1049,8 @@ EXPORT_QUERIES={
 }
 @app.get('/api/export/{entity}')
 def export_csv(entity:str,user=Depends(authorized)):
+    if user['role']!='admin' and not user['permissions'].get(entity+'.view',False):
+        fail('Chưa được cấp quyền xem dữ liệu để xuất.',403)
     if entity not in EXPORT_QUERIES: fail('Không hỗ trợ loại xuất này.',404)
     with connect() as con: data=rows(con,EXPORT_QUERIES[entity])
     output=io.StringIO()
@@ -1038,3 +1088,6 @@ app.mount('/static',StaticFiles(directory=STATIC),name='static')
 from .advanced import router as advanced_router, advanced_page
 app.include_router(advanced_router)
 app.add_api_route("/advanced", advanced_page, methods=["GET"], include_in_schema=False)
+
+from .prepayments import router as prepayments_router
+app.include_router(prepayments_router)

@@ -1,5 +1,7 @@
 # TrọFlow — Web quản lý nhà trọ chạy bằng Docker
 
+> **TrọFlow 3.0** (phân quyền 79 thao tác, chỉ số điện nước theo năm, tiền thuê trả trước nhiều tháng): xem [README-V3.md](README-V3.md). Portainer dùng `PORT=8088` hoặc cổng host tùy chọn; dữ liệu vẫn trong `/opt/troflow/`.
+
 > **TrọFlow 2.0 (đã nâng cấp 12 phân hệ):** xem [README-V2.md](README-V2.md) để biết thiết kế, chức năng mới, migration và các bước nâng cấp dữ liệu. Đăng nhập tại `/`, vào trang **TrọFlow Nâng cao** (`/advanced`). Bản Portainer hiện lưu dữ liệu ở `/opt/troflow/data`, backup ở `/opt/troflow/backups`, ảnh ở `/opt/troflow/uploads`.
 
 ![TrọFlow dashboard](previews/dashboard.png)

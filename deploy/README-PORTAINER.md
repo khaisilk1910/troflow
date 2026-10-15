@@ -1,6 +1,6 @@
 # TrọFlow: Git CMD -> GitHub Actions -> GHCR -> Portainer Stack
 
-**Phiên bản TrọFlow 2.0:** tài liệu nâng cấp nghiệp vụ, migration từ V1 và rollback an toàn nằm ở [README-V2.md](../README-V2.md). Ứng dụng có thêm `/advanced` và thư mục ảnh riêng trên host `/opt/troflow/uploads`.
+**TrọFlow 3.0:** xem [README-V3.md](../README-V3.md) trước khi nâng cấp. **Phiên bản TrọFlow 2.0:** tài liệu nâng cấp nghiệp vụ, migration từ V1 và rollback an toàn nằm ở [README-V2.md](../README-V2.md). Ứng dụng có thêm `/advanced` và thư mục ảnh riêng trên host `/opt/troflow/uploads`.
 
 Triển khai dành cho **Portainer + Docker Standalone** (không phải Docker Swarm). Dữ liệu thật ở host **`/opt/troflow/data`**, sao lưu tại **`/opt/troflow/backups`**, ảnh tải lên tại **`/opt/troflow/uploads`**, không nằm trong Git/image.
 
@@ -35,8 +35,8 @@ Nếu repo đã có sẵn, không cần `git init` hay thêm remote lần nữa;
 
 Workflow: `.github/workflows/build-deploy.yml`. Khi push `main`, chạy kiểm thử, sau đó build và push 2 tags:
 
-- `ghcr.io/myaccount/troflow:latest`
-- `ghcr.io/myaccount/troflow:sha-<12 ký tự commit>` (rollback dễ hơn)
+- `ghcr.io/khaisilk1910/troflow:latest`
+- `ghcr.io/khaisilk1910/troflow:sha-<12 ký tự commit>` (rollback dễ hơn)
 
 Thay `myaccount/troflow` bằng **đúng owner/repository**, tất cả chữ thường. Workflow tự xác định tên từ GitHub Repository, **không cần sửa workflow**. Kiểm tra trong GitHub → **Actions** → `TroFlow - Build, publish and deploy`.
 
@@ -54,9 +54,9 @@ deploy/portainer-stack.yml
 
 | Tên | Ví dụ | Ghi chú |
 |---|---|---|
-| `TROFLOW_IMAGE` | `ghcr.io/myaccount/troflow:latest` | Bắt buộc; khớp image Actions xây dựng |
-| `TROFLOW_BIND_IP` | `127.0.0.1` | Reverse proxy chạy trên cùng host; dùng `0.0.0.0` nếu cần truy cập LAN và có firewall |
-| `TROFLOW_PORT` | `8080` | Cổng HTTP của host |
+| `TROFLOW_IMAGE` | `ghcr.io/khaisilk1910/troflow:latest` | Có giá trị mặc định; khớp image Actions xây dựng |
+| `TROFLOW_BIND_IP` | `0.0.0.0` | Cho phép LAN (cần firewall); dùng `127.0.0.1` nếu reverse proxy chạy trên cùng Docker host |
+| `PORT` | `8088` | Cổng HTTP của host |
 | `COOKIE_SECURE` | `0` | `1` khi truy cập bằng HTTPS, không phải HTTP trực tiếp |
 | `TROFLOW_TZ` | `Asia/Ho_Chi_Minh` | Múi giờ |
 
@@ -81,7 +81,7 @@ Nếu cập nhật cấu hình workflow hoặc webhook, có thể chạy lại w
 
 ## 6. Test, backup và phục hồi
 
-- Truy cập `http://IP_CUA_HOST:8080` nếu `TROFLOW_BIND_IP=0.0.0.0` và firewall cho phép. Nếu IP bind `127.0.0.1`, truy cập qua reverse proxy cùng máy chủ (khuyến nghị HTTPS).
+- Truy cập `http://IP_CUA_HOST:8088` nếu `TROFLOW_BIND_IP=0.0.0.0` và firewall cho phép. Nếu IP bind `127.0.0.1`, truy cập qua reverse proxy cùng máy chủ (khuyến nghị HTTPS).
 - `docker ps --filter name=troflow`
 - `docker logs -f troflow`
 - Sao lưu cơ sở dữ liệu **đang hoạt động** (dùng SQLite online backup thay vì copy file `.db` trực tiếp):
@@ -91,7 +91,7 @@ docker exec troflow python /app/scripts/backup_sqlite.py
 ls -lh /opt/troflow/backups
 ```
 
-Script giữ **14 bản sao lưu gần nhất**, file mode private. **V2 đã tích hợp bộ lập lịch sao lưu bên trong container**, mặc định 03:00 mỗi ngày theo `Asia/Ho_Chi_Minh` (điều chỉnh trong giao diện `/advanced` → Sao lưu). Chỉ dùng cron dưới đây nếu bạn đã tắt scheduler nội bộ (`TROFLOW_SCHEDULER=0`) để tránh chạy hai lịch trùng nhau:
+Script giữ **14 bản sao lưu gần nhất**, file mode private. **V2/V3 đã tích hợp bộ lập lịch sao lưu bên trong container**, mặc định 03:00 mỗi ngày theo `Asia/Ho_Chi_Minh` (điều chỉnh trong giao diện `/advanced` → Sao lưu). Chỉ dùng cron dưới đây nếu bạn đã tắt scheduler nội bộ (`TROFLOW_SCHEDULER=0`) để tránh chạy hai lịch trùng nhau:
 
 ```cron
 0 3 * * * /usr/bin/docker exec troflow python /app/scripts/backup_sqlite.py >> /var/log/troflow-backup.log 2>&1
@@ -103,12 +103,12 @@ Script giữ **14 bản sao lưu gần nhất**, file mode private. **V2 đã t�
 
 ## 7. Rollback image
 
-Tags `sha-<12 ký tự>` được xuất bản cùng với `latest`; để rollback, trước tiên đặt `TROFLOW_IMAGE=ghcr.io/myaccount/troflow:sha-xxxxxxxxxxxx` trong Portainer rồi cập nhật/redeploy. Nếu một commit Git mới đổi cấu hình Stack, cần rollback config ở Git tương ứng. **Luôn sao lưu trước các thay đổi cấu trúc DB; bản app này chưa có hệ thống migration/rollback DB đầy đủ.**
+Tags `sha-<12 ký tự>` được xuất bản cùng với `latest`; để rollback, trước tiên đặt `TROFLOW_IMAGE=ghcr.io/khaisilk1910/troflow:sha-xxxxxxxxxxxx` trong Portainer rồi cập nhật/redeploy. Nếu một commit Git mới đổi cấu hình Stack, cần rollback config ở Git tương ứng. **Luôn sao lưu trước các thay đổi cấu trúc DB; app có migration tự động và sao lưu trước nâng cấp; rollback từ V3 về V2 bắt buộc kiểm tra tương thích và có thể cần bản backup trước migration.**
 
 ## Lưu ý
 
 - Chỉ hỗ trợ một phiên bản app truy cập SQLite từ **một máy Docker host**. Không nhân đôi app dùng chung file SQLite qua NFS hoặc Swarm replicas.
-- Không mở cổng 8080 trực tiếp ra Internet nếu không có HTTPS/reverse proxy, firewall và chính sách truy cập phù hợp.
+- Không mở cổng 8088 trực tiếp ra Internet nếu không có HTTPS/reverse proxy, firewall và chính sách truy cập phù hợp.
 - Chạy `docker inspect troflow` để kiểm tra Mounts xem đã map đúng `/opt/troflow/data`.
 - Không cần Docker Hub password: GitHub Actions push GHCR bằng `GITHUB_TOKEN` có quyền `packages: write`.
 

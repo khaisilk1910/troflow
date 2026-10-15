@@ -3,13 +3,13 @@
 # Set TROFLOW_IMAGE in the Portainer stack environment to ghcr.io/<owner>/<repo>:latest.
 services:
   troflow:
-    image: ${TROFLOW_IMAGE:?Set TROFLOW_IMAGE in Portainer stack environment}
+    image: ${TROFLOW_IMAGE:-ghcr.io/khaisilk1910/troflow:latest}
     container_name: troflow
     init: true
     restart: unless-stopped
     ports:
-      # Default: local reverse proxy only. For LAN access set TROFLOW_BIND_IP=0.0.0.0.
-      - "${TROFLOW_BIND_IP:-127.0.0.1}:${TROFLOW_PORT:-8080}:8000"
+      # Docker bridge: the host PORT is configurable; container still listens on 8000.
+      - "${TROFLOW_BIND_IP:-0.0.0.0}:${PORT:-8088}:8000"
     environment:
       DATABASE_PATH: /app/data/troflow.db
       COOKIE_SECURE: "${COOKIE_SECURE:-0}"

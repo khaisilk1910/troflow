@@ -6,17 +6,17 @@ const money=n=>Number(n||0).toLocaleString('vi-VN')+' ₫';
 const today=()=>new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Ho_Chi_Minh'});
 const period=()=>today().slice(0,7);
 const PAGES=[
- ['overview','Tổng quan','⌂'],['deposits','Tiền cọc','▣'],['residents','Người ở','♙'],
+ ['overview','Tổng quan','⌂'],['deposits','Tiền cọc','▣'],['prepayments','Thuê trả trước','◉'],['residents','Người ở','♙'],
  ['services','Phí dịch vụ','◈'],['meters','Điện & nước','ϟ'],['invoices','Hóa đơn','▤'],
  ['handovers','Bàn giao phòng','⚿'],['imports','Nhập Excel','⇥'],['access','Phân quyền','⚙'],
  ['automation','Tự động hóa','↻'],['backups','Sao lưu','▦'],['bank','VietQR','◉']];
-const state={page:'overview',data:{},auth:null,csrf:'',form:null,filters:{period:period()},busy:false};
+const state={page:'overview',data:{},auth:null,csrf:'',form:null,filters:{period:period(),meterYear:Number(period().slice(0,4))},busy:false};
 async function api(path,method='GET',body){
  const args={method,credentials:'same-origin',headers:{'Accept':'application/json'}};
  if(method!=='GET')args.headers['X-CSRF-Token']=state.csrf;
  if(body!==undefined){if(body instanceof FormData)args.body=body;else{args.headers['Content-Type']='application/json';args.body=JSON.stringify(body);}}
  const r=await fetch('/api/'+path,args);let data;try{data=await r.json()}catch{throw Error('Phản hồi máy chủ không hợp lệ.');}
- if(!r.ok)throw Error(typeof data.detail==='string'?data.detail:'Không thể xử lý thao tác.');return data;
+ if(!r.ok){const err=Error(typeof data.detail==='string'?data.detail:'Không thể xử lý thao tác.');err.status=r.status;throw err;}return data;
 }
 function toast(text,error=false){const el=document.createElement('div');el.className='toast'+(error?' error':'');el.textContent=text;$('#message').append(el);setTimeout(()=>el.remove(),4500);}
 function opt(items,label){return items.map(i=>`<option value="${esc(i.id)}">${esc(label(i))}</option>`).join('');}
@@ -49,10 +49,13 @@ const sOpts=()=>state.data.services?.map(x=>C(x.id,`${x.property_name} · ${x.na
 const rOpts=()=>state.data.rooms?.map(x=>C(x.id,`${x.property_name} · ${x.code}`))||[];
 const jsonForm=()=>{const fd=new FormData($('#pro-form'));const o=Object.fromEntries(fd.entries());for(const x of $$('input[type="checkbox"]','#pro-form'))o[x.name]=x.checked;return o;};
 function $$(q,el=document){return [...(typeof el==='string'?$(el):el).querySelectorAll(q)];}
-function btn(label,cmd,id='',style=''){return `<button type="button" class="button ${style}" data-cmd="${esc(cmd)}" data-id="${esc(id)}">${esc(label)}</button>`;}
+const pageAbility={overview:'dashboard.view',deposits:'deposits.view',prepayments:'prepayments.view',residents:'residents.view',services:'services.view',meters:'readings.view',invoices:'invoices.view',handovers:'handovers.view',imports:'imports.view',access:'access.view',automation:'schedules.view',backups:'backups.view',bank:'bank.view'};
+const can=key=>state.auth?.user?.role==='admin'||Boolean(state.auth?.user?.permissions?.[key]);
+const cmdAbility={'prepay-new':'prepayments.record','prepay-refund':'prepayments.refund','deposit-new':'deposits.record','resident-new':'residents.create','resident-leave':'residents.leave','service-new':'services.create','service-edit':'services.edit','service-assign':'services.assign','service-remove':'services.remove','meter-batch':'readings.batch','meter-photo-e':'readings.photos','meter-photo-w':'readings.photos','invoice-new':'invoices.create','invoice-edit':'invoices.edit','invoice-publish':'invoices.publish','proration':'contracts.proration','handover-new':'handovers.create','handover-photo':'files.upload','schedule-new':'schedules.edit','schedule-run':'schedules.execute','backup-create':'backups.create','backup-verify':'backups.verify','backup-restore':'backups.restore','backup-config':'backups.edit','bank-edit':'bank.edit','access-edit':'access.edit'};
+function btn(label,cmd,id='',style=''){if(cmdAbility[cmd]&&!can(cmdAbility[cmd]))return '';return `<button type="button" class="button ${style}" data-cmd="${esc(cmd)}" data-id="${esc(id)}">${esc(label)}</button>`;}
 function badge(text,kind=''){return `<span class="pill ${kind}">${esc(text)}</span>`;}
 function table(headers,records){return `<div class="panel"><div class="table-scroll"><table class="data"><thead><tr>${headers.map(h=>`<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${records.length?records.join(''):`<tr><td colspan="${headers.length}"><div class="empty">Chưa có dữ liệu. Bạn có thể tạo bản ghi mới ở phía trên.</div></td></tr>`}</tbody></table></div></div>`;}
-function header(title,desc,action=''){return `<div class="pagehead"><div><div class="eyebrow">TRỌFLOW PRO · VERSION 2.0</div><h1>${esc(title)}</h1><p>${esc(desc)}</p></div><div class="btnrow">${action}</div></div>`;}
+function header(title,desc,action=''){return `<div class="pagehead"><div><div class="eyebrow">TRỌFLOW PRO · VERSION 3.0</div><h1>${esc(title)}</h1><p>${esc(desc)}</p></div><div class="btnrow">${action}</div></div>`;}
 function panel(title,description,content){return `<section class="panel"><div class="panelhead"><div><strong>${esc(title)}</strong><p>${esc(description)}</p></div></div><div class="panelbody">${content}</div></section>`;}
 function pageOverview(){let s=state.data.summary||{},d=state.data;
  const kpis=[['Số cơ sở',s.properties?.length||0,'▣'],['Hóa đơn nháp',s.drafts||0,'▤'],['Phòng thiếu chỉ số',s.missing_readings?.length||0,'ϟ'],['Hợp đồng cần đối chiếu cọc',s.unsettled_deposits||0,'◈']];
@@ -65,6 +68,12 @@ function pageDeposits(){const list=state.data.balances||[], tx=state.data.deposi
  table(['HỢP ĐỒNG','NGƯỜI THUÊ','CỌC YÊU CẦU','ĐÃ THU','ĐANG GIỮ','THIẾU CỌC'],list.map(x=>`<tr><td><strong>${esc(x.property_name)} / ${esc(x.room_code)}</strong></td><td>${esc(x.tenant_name)}</td><td class="money">${money(x.required_amount)}</td><td>${money(x.received)}</td><td class="money">${money(x.held)}</td><td>${x.missing?badge(money(x.missing),'orange'):badge('Đủ')}</td></tr>`))+
  panel('Lịch sử giao dịch cọc','Sổ quỹ chỉ bổ sung, không sửa/xóa giao dịch cũ',tx.length?tx.slice(0,30).map(x=>`<div class="list-row"><strong>${esc(x.tenant_name)} · ${esc(x.room_code)} — ${money(x.amount)}</strong>${esc({receive:'Thu cọc',refund:'Hoàn cọc',deduct:'Khấu trừ'}[x.kind])} · ${esc(x.transacted_on)} · ${esc(x.note)}</div>`).join(''):'Chưa có giao dịch.');
 }
+function pagePrepayments(){const list=state.data.prepayments||[];
+ const received=list.filter(x=>x.status==='active').reduce((v,x)=>v+Number(x.amount),0);
+ return header('Tiền thuê trả trước','Thu tiền phòng theo nhiều tháng hoặc theo quý; điện, nước và dịch vụ tiếp tục lên hóa đơn từng tháng.',btn('+ Thu trước tiền phòng','prepay-new','','primary'))+
+ `<div class="note success"><b>Đang phân bổ: ${money(received)}</b> · Mỗi tháng đã trả trước ghi số tiền phòng phải thu = 0. Điện, nước, dịch vụ vẫn được tính đúng tháng. Các khoản trả trước nằm ngoài sổ thanh toán hóa đơn, không cộng tiền phòng lần hai.</div>`+
+ table(['PHÒNG / NGƯỜI THUÊ','THÁNG ÁP DỤNG','TIỀN PHÒNG ĐÃ THU','THỜI ĐIỂM THU','TRẠNG THÁI',''],list.map(x=>`<tr><td><strong>${esc(x.property_name)} / ${esc(x.room_code)}</strong><br><small class="muted">${esc(x.tenant_name)} · ${esc(x.tenant_phone||'')}</small></td><td>${esc(x.period)}</td><td class="money">${money(x.amount)}</td><td>${esc(x.paid_on)} · ${esc(x.method)}</td><td>${x.status==='active'?badge('Đã trả trước'):badge('Đã hoàn','orange')}</td><td>${x.status==='active'?btn('Hoàn kỳ','prepay-refund',x.id):''}</td></tr>`));
+}
 function pageResidents(){const list=state.data.residents||[];
  return header('Danh sách người ở','Lưu người đại diện và những người cùng cư trú, ngày vào/ngày rời đi, số giấy tờ.',btn('+ Thêm người ở','resident-new','','primary'))+
  table(['HỢP ĐỒNG','HỌ TÊN','ĐIỆN THOẠI','CCCD','NGÀY VÀO','NGÀY RỜI','THAO TÁC'],list.map(x=>`<tr><td>${esc(x.room_code)}<br><small class="muted">${esc(x.property_name)}</small></td><td><strong>${esc(x.full_name)}</strong>${x.is_primary?' '+badge('Đại diện'):''}</td><td>${esc(x.phone)}</td><td>${esc(x.id_number)}</td><td>${esc(x.moved_in)}</td><td>${x.moved_out?esc(x.moved_out):badge('Đang ở')}</td><td><div class="actions">${!x.moved_out&&!x.is_primary?btn('Báo rời','resident-leave',x.id):''}</div></td></tr>`));
@@ -75,11 +84,15 @@ function pageServices(){const list=state.data.services||[],assigned=state.data.a
  table(['CƠ SỞ','TÊN DỊCH VỤ','KIỂU TÍNH','ĐƠN GIÁ','TRẠNG THÁI',''],list.map(x=>`<tr><td>${esc(x.property_name)}</td><td><strong>${esc(x.name)}</strong></td><td>${esc({flat:'Theo phòng',person:'Theo người',quantity:'Theo số lượng'}[x.charge_type])}</td><td class="money">${money(x.unit_price)}</td><td>${badge(x.active?'Đang dùng':'Tạm tắt',x.active?'':'orange')}</td><td>${btn('Sửa','service-edit',x.id)}</td></tr>`))+
  table(['HỢP ĐỒNG','DỊCH VỤ','ĐƠN GIÁ','SỐ LƯỢNG','TRẠNG THÁI',''],assigned.map(x=>`<tr><td>${esc(x.room_code)} #${x.contract_id}</td><td>${esc(x.service_name)}</td><td>${money(x.unit_price)}</td><td>${esc(x.quantity)}</td><td>${x.active?badge('Áp dụng'):badge('Đã tắt','orange')}</td><td>${x.active?btn('Ngừng','service-remove',x.id):''}</td></tr>`));
 }
+function monthEnd(p){const [y,m]=p.split('-').map(Number);return `${p}-${String(new Date(y,m,0).getDate()).padStart(2,'0')}`;}
 function pageMeters(){const warnings=state.data.meterAlerts||[],rd=state.data.readings||[],month=state.filters.period;
+ const year=state.filters.meterYear;
+ const years=[...new Set([year,...rd.map(x=>Number(x.period.slice(0,4)))])].sort((a,b)=>b-a);
+ const yearFilter=`<div class="field" style="max-width:190px;margin-bottom:15px"><label>Năm thống kê</label><select id="pro-meter-year">${years.map(y=>`<option value="${y}" ${y===year?'selected':''}>Cả năm ${y}</option>`).join('')}</select></div>`;
  return header('Ghi chỉ số điện nước','Ghi nhanh nhiều phòng, cảnh báo mức dùng bất thường, bổ sung ảnh công tơ.',btn('Ghi hàng loạt','meter-batch','','primary')+btn('Đổi kỳ','month-change'))+
- `<div class="note">Kỳ đang chọn: <b>${esc(month)}</b>. Chỉ số được khóa khi đã có hóa đơn của kỳ đó.</div>`+
+ `<div class="note">Đang xem tất cả 12 tháng năm <b>${year}</b>. Nhập chỉ số vẫn thực hiện theo tháng, vì hóa đơn điện nước phát sinh mỗi tháng.</div>`+yearFilter+
  panel('Cảnh báo dữ liệu',`${warnings.length} cảnh báo trong kỳ`,warnings.length?warnings.map(x=>`<div class="list-row"><strong>Phòng ${esc(x.room_code)}</strong>${esc(x.message)}</div>`).join(''):'<div class="note success">Không phát hiện bất thường.</div>')+
- table(['PHÒNG','KỲ','ĐIỆN CŨ / MỚI','NƯỚC CŨ / MỚI','ẢNH CÔNG TƠ',''],rd.filter(x=>x.period===month).map(x=>`<tr><td><strong>${esc(x.room_code)}</strong><br><small class="muted">${esc(x.property_name)}</small></td><td>${esc(x.period)}</td><td>${esc(x.electric_old)} → ${esc(x.electric_new)}</td><td>${esc(x.water_old)} → ${esc(x.water_new)}</td><td>${x.electric_photo?`<a href="/api/v2/files/${encodeURIComponent(x.electric_photo)}" target="_blank">Ảnh điện</a>`:'—'} ${x.water_photo?`<a href="/api/v2/files/${encodeURIComponent(x.water_photo)}" target="_blank">Ảnh nước</a>`:''}</td><td><div class="actions">${btn('Ảnh điện','meter-photo-e',x.id)}${btn('Ảnh nước','meter-photo-w',x.id)}</div></td></tr>`));
+ table(['PHÒNG / NGƯỜI THUÊ','KỲ','ĐIỆN CŨ / MỚI','NƯỚC CŨ / MỚI','ẢNH CÔNG TƠ',''],rd.filter(x=>x.period.startsWith(String(year)+'-')).map(x=>`<tr><td><strong>${esc(x.room_code)}</strong><br><small class="muted">${esc(x.property_name)} · ${esc(x.tenant_name||'Chưa rõ người thuê')}</small></td><td>${esc(x.period)}</td><td>${esc(x.electric_old)} → ${esc(x.electric_new)}</td><td>${esc(x.water_old)} → ${esc(x.water_new)}</td><td>${x.electric_photo?`<a href="/api/v2/files/${encodeURIComponent(x.electric_photo)}" target="_blank">Ảnh điện</a>`:'—'} ${x.water_photo?`<a href="/api/v2/files/${encodeURIComponent(x.water_photo)}" target="_blank">Ảnh nước</a>`:''}</td><td><div class="actions">${btn('Ảnh điện','meter-photo-e',x.id)}${btn('Ảnh nước','meter-photo-w',x.id)}</div></td></tr>`));
 }
 function pageInvoices(){const list=state.data.invoices||[],drafts=list.filter(x=>x.status==='draft');
  return header('Hóa đơn chuyên nghiệp','Xem trước, lập nháp, chỉnh sửa, duyệt/chốt, PDF và mã thanh toán VietQR.',btn('+ Lập nháp','invoice-new','','primary')+btn('Tính theo ngày','proration')+btn('Cập nhật','reload'))+
@@ -117,15 +130,15 @@ function pageBank(){const p=state.data.properties||[];
  `<div class="note">Sử dụng dịch vụ ảnh VietQR. Mã VietQR chỉ hỗ trợ tạo yêu cầu chuyển tiền, không thay thế đối soát ngân hàng. Mỗi cơ sở có tài khoản nhận tiền riêng.</div>`+
  table(['CƠ SỞ','NGÂN HÀNG','SỐ TÀI KHOẢN','CHỦ TÀI KHOẢN',''],p.map(x=>`<tr><td><strong>${esc(x.name)}</strong></td><td>${esc(x.bank_code||'Chưa có')}</td><td>${esc(x.bank_account||'—')}</td><td>${esc(x.bank_name||'—')}</td><td>${btn('Cấu hình','bank-edit',x.id)}</td></tr>`));
 }
-const VIEWS={overview:pageOverview,deposits:pageDeposits,residents:pageResidents,services:pageServices,meters:pageMeters,invoices:pageInvoices,handovers:pageHandovers,imports:pageImports,access:pageAccess,automation:pageAutomation,backups:pageBackups,bank:pageBank};
-function layout(){const user=state.auth?.user||{};$('#root').innerHTML=`<div class="shell"><aside class="side"><a class="brand" href="/"><span class="brand-icon">⌂</span>TrọFlow<span style="color:#00d3a5">.</span></a><div class="side-sub">PRO WORKSPACE · V2.0</div>
- <div class="side-label">NGHIỆP VỤ</div>${PAGES.slice(0,8).map(([key,label,icon])=>`<button class="nav ${state.page===key?'active':''}" data-page="${key}"><span class="ni">${icon}</span><span>${label}</span></button>`).join('')}
- <div class="side-label">HỆ THỐNG</div>${PAGES.slice(8).map(([key,label,icon])=>`<button class="nav ${state.page===key?'active':''}" data-page="${key}"><span class="ni">${icon}</span><span>${label}</span></button>`).join('')}
+const VIEWS={overview:pageOverview,deposits:pageDeposits,prepayments:pagePrepayments,residents:pageResidents,services:pageServices,meters:pageMeters,invoices:pageInvoices,handovers:pageHandovers,imports:pageImports,access:pageAccess,automation:pageAutomation,backups:pageBackups,bank:pageBank};
+function layout(){const user=state.auth?.user||{};$('#root').innerHTML=`<div class="shell"><aside class="side"><a class="brand" href="/"><span class="brand-icon">⌂</span>TrọFlow<span style="color:#00d3a5">.</span></a><div class="side-sub">PRO WORKSPACE · V3.0</div>
+ <div class="side-label">NGHIỆP VỤ</div>${PAGES.slice(0,9).filter(([key])=>can(pageAbility[key])).map(([key,label,icon])=>`<button class="nav ${state.page===key?'active':''}" data-page="${key}"><span class="ni">${icon}</span><span>${label}</span></button>`).join('')}
+ <div class="side-label">HỆ THỐNG</div>${PAGES.slice(9).filter(([key])=>can(pageAbility[key])).map(([key,label,icon])=>`<button class="nav ${state.page===key?'active':''}" data-page="${key}"><span class="ni">${icon}</span><span>${label}</span></button>`).join('')}
  <div class="side-bottom"><a href="/">← Trở về TrọFlow cơ bản</a><div class="user-meta">${esc(user.full_name)} · ${esc(user.role)}</div></div></aside>
  <div class="main"><header class="top"><div class="route">TrọFlow / <strong>${esc(PAGES.find(x=>x[0]===state.page)?.[1]||'Pro')}</strong></div><div class="top-right"><span style="font-size:11px;color:#8090a3">Quản trị vận hành</span><span class="avatar">${esc(user.full_name?.slice(0,1)||'T')}</span><button class="button" data-cmd="reload">↻ Làm mới</button></div></header><main class="content" id="content"></main></div></div>`;}
 function render(){layout();try{$('#content').innerHTML=VIEWS[state.page]()}catch(e){console.error(e);$('#content').innerHTML=header('Không thể hiển thị',e.message);}}
-async function refresh(){const needed={overview:['summary'],deposits:['balances','deposits'],residents:['residents'],services:['services','assigned'],meters:['readings','meterAlerts'],invoices:['invoices'],handovers:['handovers'],imports:[],access:['access'],automation:['schedules','scheduleEvents'],backups:['backups','backupConfig'],bank:['properties']};
- const paths={summary:'v2/summary',balances:'v2/deposits/balances',deposits:'v2/deposits',residents:'v2/residents',services:'v2/services',assigned:'v2/contract-services',readings:'readings',meterAlerts:'v2/readings/alerts?period='+encodeURIComponent(state.filters.period),invoices:'invoices',handovers:'v2/handovers',access:'v2/access',schedules:'v2/schedules',scheduleEvents:'v2/schedules/events',backups:'v2/backups',backupConfig:'v2/backups/config',properties:'properties',rooms:'rooms',contracts:'contracts'};
+async function refresh(){const needed={overview:['summary'],deposits:['balances','deposits'],prepayments:['prepayments'],residents:['residents'],services:['services','assigned'],meters:['readings','meterAlerts'],invoices:['invoices'],handovers:['handovers'],imports:[],access:['access','accessCatalog'],automation:['schedules','scheduleEvents'],backups:['backups','backupConfig'],bank:['properties']};
+ const paths={prepayments:'v2/prepayments',accessCatalog:'v2/access/catalog',summary:'v2/summary',balances:'v2/deposits/balances',deposits:'v2/deposits',residents:'v2/residents',services:'v2/services',assigned:'v2/contract-services',readings:'readings',meterAlerts:'v2/readings/alerts?period='+encodeURIComponent(state.filters.period),invoices:'invoices',handovers:'v2/handovers',access:'v2/access',schedules:'v2/schedules',scheduleEvents:'v2/schedules/events',backups:'v2/backups',backupConfig:'v2/backups/config',properties:'properties',rooms:'rooms',contracts:'contracts'};
  const keys=[...new Set(['properties','rooms','contracts',...(needed[state.page]||[])])];
  await Promise.all(keys.map(async k=>{try{state.data[k]=await api(paths[k]);}catch(e){if(![403,401].includes(e.status))console.warn(k,e);state.data[k]=[];}}));render();
 }
@@ -133,6 +146,15 @@ function activePropertyOptions(){return pOpts()}
 function selectedOptions(items,value=''){return items.map(x=>({...x,selected:String(x.value)===String(value)}));}
 function runForm(title,fields,method,path,finish){form(title,fields,async data=>{await api(path,method,data);toast('Lưu dữ liệu thành công.');if(finish)finish();});}
 function command(cmd,id){const sid=Number(id),d=state.data;
+ if(cmd==='prepay-new'){form('Thu tiền phòng nhiều tháng',[formspec('contract_id','Người thuê · Hợp đồng','select',cOpts().filter(o=>(d.contracts||[]).find(c=>String(c.id)===o.value)?.status==='active')),
+ formspec('start_period','Từ tháng','month',{},period()),formspec('duration_months','Thanh toán nhanh','select',[C('1','1 tháng'),C('3','1 quý (3 tháng)'),C('6','6 tháng'),C('12','1 năm'),C('custom','Chọn tùy ý')],'1'),formspec('end_period','Đến tháng (bao gồm tháng này)','month',{},period()),
+ formspec('paid_on','Ngày nhận tiền','date',{},today()),formspec('method','Phương thức thanh toán','select',[C('transfer','Chuyển khoản'),C('cash','Tiền mặt'),C('other','Khác')]),formspec('note','Ghi chú / mã giao dịch','textarea')],
+ d=>api('v2/prepayments','POST',d),'Ghi nhận tiền thuê trả trước',
+ 'Số tiền tự tính theo hợp đồng cho từng tháng trong khoảng đã chọn. Không thể trả trước trùng tháng hoặc kỳ đã có hóa đơn.');return;}
+ if(cmd==='prepay-refund'){form('Hoàn tiền thuê trả trước',[formspec('refunded_on','Ngày hoàn','date',{},today()),formspec('reason','Lý do hoàn tiền','textarea')],
+ d=>api('v2/prepayments/'+sid+'/refund','POST',d),'Xác nhận hoàn kỳ',
+ 'Chỉ được hoàn từng tháng chưa có hóa đơn; hệ thống lưu lịch sử và không xóa giao dịch gốc.');return;}
+
  if(cmd==='deposit-new'){form('Ghi nhận giao dịch tiền cọc',[
  formspec('contract_id','Hợp đồng','select',cOpts()),formspec('kind','Loại giao dịch','select',[C('receive','Thu cọc'),C('refund','Hoàn cọc'),C('deduct','Khấu trừ')]),
  formspec('amount','Số tiền (VND)','money',{},0),formspec('transacted_on','Ngày giao dịch','date',{},today()),formspec('note','Lý do / chứng từ','textarea',{},'')],d=>api('v2/deposits','POST',d));return;}
@@ -149,8 +171,8 @@ function command(cmd,id){const sid=Number(id),d=state.data;
  if(cmd==='service-remove'){if(confirm('Ngừng dịch vụ cho hợp đồng? Các hóa đơn cũ không thay đổi.'))act('v2/contract-services/'+sid,'DELETE');return;}
  if(cmd==='month-change'){form('Chọn kỳ điện nước',[formspec('period','Kỳ','month',{},state.filters.period)],async d=>{state.filters.period=d.period;});return;}
  if(cmd==='meter-batch'){
- const rooms=d.rooms.filter(x=>x.contract_id), month=state.filters.period;let entries=rooms.map(r=>{const old=d.readings.find(x=>x.room_id===r.id&&x.period===month);
- return `<tr><td>${esc(r.property_name)} / ${esc(r.code)}<input type="hidden" name="room_${r.id}" value="${r.id}"></td>${['electric_old','electric_new','water_old','water_new'].map(k=>`<td><input style="width:85px;padding:7px;border:1px solid #d7e0ea;border-radius:7px" type="number" step="any" min="0" name="${r.id}_${k}" value="${old?.[k]??0}" required></td>`).join('')}</tr>`;});
+ const rooms=d.rooms.filter(x=>(d.contracts||[]).some(c=>c.room_id===x.id&&c.start_date<=monthEnd(state.filters.period)&&c.end_date>=state.filters.period+'-01')), month=state.filters.period;let entries=rooms.map(r=>{const old=d.readings.find(x=>x.room_id===r.id&&x.period===month);
+ return `<tr><td>${esc(r.property_name)} / ${esc(r.code)}<br><small>${esc(d.contracts.find(c=>c.room_id===r.id&&c.start_date<=monthEnd(month)&&c.end_date>=month+'-01')?.tenant_name||'')}</small><input type="hidden" name="room_${r.id}" value="${r.id}"></td>${['electric_old','electric_new','water_old','water_new'].map(k=>`<td><input style="width:85px;padding:7px;border:1px solid #d7e0ea;border-radius:7px" type="number" step="any" min="0" name="${r.id}_${k}" value="${old?.[k]??0}" required></td>`).join('')}</tr>`;});
  state.form={save:async()=>{const fd=new FormData($('#pro-form'));const rows=rooms.map(x=>({room_id:x.id,...Object.fromEntries(['electric_old','electric_new','water_old','water_new'].map(k=>[k,fd.get(x.id+'_'+k)]))}));const res=await api('v2/readings/batch','POST',{period:month,entries:rows});toast(`Đã lưu ${res.updated} phòng; ${res.alerts.length} cảnh báo.`);},custom:true};
  $('#modal').innerHTML=`<div class="modal-wrap"><div class="dialog" style="width:min(1000px,100%)"><div class="dialog-head"><h2>Ghi chỉ số hàng loạt · ${esc(month)}</h2>${btn('✕','close')}</div><form id="pro-form"><div class="dialog-body"><div class="note">Điền chỉ số công tơ cũ/mới. Phòng đã phát sinh hóa đơn sẽ không được cập nhật.</div><div class="table-scroll"><table class="data"><thead><tr><th>PHÒNG</th><th>ĐIỆN CŨ</th><th>ĐIỆN MỚI</th><th>NƯỚC CŨ</th><th>NƯỚC MỚI</th></tr></thead><tbody>${entries.join('')}</tbody></table></div></div><div class="dialog-foot">${btn('Đóng','close')}<button class="button primary" type="submit">Lưu chỉ số</button></div></form></div></div>`;return;}
  if(cmd==='meter-photo-e'||cmd==='meter-photo-w'||cmd==='handover-photo'){
@@ -192,10 +214,14 @@ function command(cmd,id){const sid=Number(id),d=state.data;
  formspec('confirmed_by','Người xác nhận'),formspec('description','Hiện trạng phòng, thiết bị, công nợ còn lại','textarea')],d=>api('v2/handovers','POST',d),'Lưu biên bản',
  'Biên bản trả phòng sẽ kết thúc hợp đồng và thực hiện khấu trừ/hoàn cọc trong cùng giao dịch.');return;}
  if(cmd==='access-edit'){
- const x=d.access.find(x=>x.id===sid);
- const options=[C('manager','Quản lý'),C('accountant','Kế toán'),C('collector','Thu tiền'),C('maintenance','Bảo trì'),C('viewer','Chỉ xem')];
+ const x=d.access.find(x=>x.id===sid),catalog=d.accessCatalog;
+ if(!x||!catalog?.groups){toast('Không tải được danh sách chức năng.',true);return;}
+ const roles=[C('manager','Quản lý'),C('accountant','Kế toán'),C('collector','Thu tiền'),C('maintenance','Bảo trì'),C('viewer','Chỉ xem')];
+ const groupRows=catalog.groups.map(g=>{const checked=g.actions.filter(a=>x.permissions?.[a.key]).length;
+  return `<details class="perm-section" data-perm-section="${esc(g.id)}" ${!g.admin_only?'open':''}><summary><span class="perm-name">${esc(g.label)} ${g.admin_only?'<small>Khóa Admin</small>':''}</span><span class="perm-count">${checked}/${g.actions.length}</span></summary><div class="perm-actions">${g.actions.map(a=>`<label class="perm-toggle"><span>${esc(a.label)}</span><input type="checkbox" data-permission="${esc(a.key)}" ${x.permissions?.[a.key]?'checked':''} ${a.locked?'disabled':''}><i aria-hidden="true"></i></label>`).join('')}</div></details>`}).join('');
  state.form={access:true,userId:sid};
- $('#modal').innerHTML=`<div class="modal-wrap"><div class="dialog"><div class="dialog-head"><h2>Phân quyền · ${esc(x.full_name)}</h2>${btn('✕','close')}</div><form id="pro-form"><div class="dialog-body"><div class="field"><label>Vai trò</label><select name="job_role">${options.map(o=>`<option value="${o.value}" ${x.job_role===o.value?'selected':''}>${o.label}</option>`).join('')}</select></div><p class="muted" style="margin-top:20px">Chọn cơ sở được phép truy cập. Nếu không chọn cơ sở nào, nhân viên áp dụng cho tất cả cơ sở (tương thích tài khoản cũ).</p><div class="list">${d.properties.map(p=>`<label class="list-row"><input type="checkbox" name="prop" value="${p.id}" ${x.property_ids?.includes(p.id)?'checked':''}> ${esc(p.name)}</label>`).join('')}</div></div><div class="dialog-foot">${btn('Hủy','close')}<button class="button primary" type="submit">Lưu phân quyền</button></div></form></div></div>`;return;}
+ $('#modal').innerHTML=`<div class="modal-wrap"><div class="dialog perm-dialog" role="dialog" aria-modal="true" aria-label="Phân quyền tài khoản"><div class="dialog-head"><div><h2>Phân quyền · ${esc(x.full_name)}</h2><p class="muted">@${esc(x.username)} · Thiết lập riêng từng tính năng</p></div>${btn('✕','close')}</div><form id="pro-form"><div class="dialog-body"><div class="perm-profile"><div class="field"><label>Vai trò mẫu</label><select name="job_role" id="perm-role">${roles.map(o=>`<option value="${o.value}" ${x.job_role===o.value?'selected':''}>${o.label}</option>`).join('')}</select></div><div class="perm-status"><strong id="perm-total">0 quyền được cấp</strong><small>Lưu thay đổi sẽ đăng xuất các phiên của nhân viên.</small></div></div><div class="perm-scope"><strong>Phạm vi cơ sở</strong><label class="perm-check"><input id="perm-all-properties" type="checkbox" ${x.property_ids?.length===0?'checked':''}> Cho phép tất cả cơ sở</label><div class="perm-properties" id="perm-properties">${d.properties.map(p=>`<label class="perm-check"><input type="checkbox" name="prop" value="${p.id}" ${x.property_ids?.includes(p.id)?'checked':''}> ${esc(p.name)}</label>`).join('')}</div></div><div class="perm-bar"><strong>Quyền thao tác chi tiết</strong><div><button type="button" class="button" data-cmd="perm-all">Chọn tất cả</button><button type="button" class="button" data-cmd="perm-none">Bỏ chọn</button></div></div><div class="field"><input id="perm-search" type="search" placeholder="Tìm chức năng..." aria-label="Tìm quyền"></div><div class="perm-list">${groupRows}</div><div class="note">Các quyền quản trị tài khoản, phân quyền, sao lưu/khôi phục, ngân hàng và nhật ký chỉ dành cho Admin và không thể cấp cho nhân viên.</div></div><div class="dialog-foot"><button type="button" class="button" data-cmd="close">Hủy</button><button class="button primary" type="submit">✓ Lưu phân quyền</button></div></form></div></div>`;
+ syncPermissionsUI();return;}
  if(cmd==='schedule-new'||cmd==='schedule-run'){
  form(cmd==='schedule-run'?'Chạy lịch ngay (tạo nháp)':'Cài lịch hóa đơn',[
  formspec('property_id','Cơ sở','select',pOpts()),...(cmd==='schedule-run'?[formspec('period','Kỳ','month',{},period())]:[
@@ -211,12 +237,21 @@ function command(cmd,id){const sid=Number(id),d=state.data;
  form('Tài khoản VietQR · '+x.name,[formspec('bank_code','Mã ngân hàng (BIN hoặc mã viết tắt)','text',{},x.bank_code||''),
  formspec('bank_account','Số tài khoản','text',{},x.bank_account||''),formspec('bank_name','Tên chủ tài khoản','text',{},x.bank_name||'')],y=>api('v2/properties/'+sid+'/bank','PUT',y));return;}
 }
+function syncPermissionsUI(){const checks=$$('[data-permission]');let n=checks.filter(x=>x.checked&&!x.disabled).length;
+ const counter=$('#perm-total');if(counter)counter.textContent=n+' quyền được cấp';
+ for(const group of $$('[data-perm-section]')){const inputs=$$('[data-permission]',group);const box=group.querySelector('.perm-count');if(box)box.textContent=inputs.filter(x=>x.checked).length+'/'+inputs.length;}
+ const scope=$('#perm-all-properties');if(scope){for(const x of $$('#perm-properties input'))x.disabled=scope.checked;}
+}
+function applyRolePreset(job){const cfg=state.data.accessCatalog?.role_defaults?.[job]||{};
+ for(const check of $$('[data-permission]'))if(!check.disabled)check.checked=Boolean(cfg[check.dataset.permission]);
+ syncPermissionsUI();}
 async function act(path,method='POST',data){try{const result=await api(path,method,data);toast(result.message||'Đã thực hiện thành công.');await refresh();}catch(e){toast(e.message,true);}}
 document.addEventListener('click',async e=>{
  if(e.target.matches('.modal-wrap')){close();return;}
  const target=e.target.closest('[data-page],[data-cmd]');if(!target)return;
- if(target.dataset.page){state.page=target.dataset.page;await refresh();window.scrollTo(0,0);return;}
- const cmd=target.dataset.cmd,id=target.dataset.id;
+ if(target.dataset.page){if(!can(pageAbility[target.dataset.page]))return;state.page=target.dataset.page;await refresh();window.scrollTo(0,0);return;}
+ const cmd=target.dataset.cmd,id=target.dataset.id;if(cmdAbility[cmd]&&!can(cmdAbility[cmd]))return;
+ if(cmd==='perm-all'||cmd==='perm-none'){for(const c of $$('[data-permission]'))if(!c.disabled)c.checked=cmd==='perm-all';syncPermissionsUI();return;}
  if(cmd==='close'){close();return;}if(cmd==='reload'){await refresh();toast('Đã làm mới dữ liệu.');return;}
  if(cmd==='import-template'){window.location.href='/api/v2/imports/template/'+$('#import-entity').value;return;}
  if(cmd==='import-preview'){
@@ -225,6 +260,22 @@ document.addEventListener('click',async e=>{
  }
  command(cmd,id);
 });
+document.addEventListener('change',e=>{
+ if(e.target.closest('#pro-form')&&['duration_months','start_period'].includes(e.target.name)){
+  const f=e.target.form,months=f?.elements.duration_months?.value,first=f?.elements.start_period?.value;
+  if(first&&months&&months!=='custom'){
+   const [y,m]=first.split('-').map(Number),d=Number(months)-1;
+   f.elements.end_period.value=`${y+Math.floor((m-1+d)/12)}-${String((m-1+d)%12+1).padStart(2,'0')}`;
+  }
+  return;
+ }
+ if(e.target.id==='perm-role'){if(confirm('Áp dụng quyền mặc định theo vai trò mới? Các ô hiện tại sẽ thay đổi.'))applyRolePreset(e.target.value);return;}
+ if(e.target.id==='perm-all-properties'||e.target.dataset.permission||e.target.name==='prop'){syncPermissionsUI();return;}
+ if(e.target.id==='pro-meter-year'){state.filters.meterYear=Number(e.target.value);render();}
+});
+document.addEventListener('input',e=>{if(e.target.id==='perm-search'){
+ const q=e.target.value.trim().toLocaleLowerCase('vi');for(const g of $$('[data-perm-section]'))g.style.display=g.textContent.toLocaleLowerCase('vi').includes(q)?'':'none';
+}});
 document.addEventListener('submit',async e=>{
  if(e.target.id==='import-form'){
   e.preventDefault();if(!confirm('Xác nhận ghi toàn bộ file vào database?'))return;
@@ -235,7 +286,12 @@ document.addEventListener('submit',async e=>{
  if(e.target.id!=='pro-form')return;e.preventDefault();if(state.busy)return;state.busy=true;
  try{
   if(state.form?.file){const fd=new FormData(e.target);fd.append('category',state.form.category);fd.append('related_id',state.form.related_id);await api('v2/files','POST',fd);toast('Đã lưu ảnh thành công.');}
-  else if(state.form?.access){const fd=new FormData(e.target);await api('v2/access/'+state.form.userId,'PUT',{job_role:fd.get('job_role'),property_ids:fd.getAll('prop').map(Number)});toast('Đã cập nhật phân quyền.');}
+  else if(state.form?.access){const fd=new FormData(e.target);
+   const permissions=Object.fromEntries($$('[data-permission]',e.target).map(x=>[x.dataset.permission,Boolean(x.checked)]));
+   const properties=$('#perm-all-properties')?.checked?[]:fd.getAll('prop').map(Number);
+   if(!$('#perm-all-properties')?.checked&&!properties.length)throw Error('Hãy chọn ít nhất một cơ sở hoặc tất cả cơ sở.');
+   await api('v2/access/'+state.form.userId,'PUT',{job_role:fd.get('job_role'),property_ids:properties,permissions});
+   toast('Đã lưu quyền và cập nhật phiên đăng nhập nhân viên.');}
   else if(state.form?.custom){await state.form.save();}
   else if(state.form?.save){const fd=new FormData(e.target);const data=Object.fromEntries(fd.entries());for(const input of e.target.querySelectorAll('input[type=checkbox]'))data[input.name]=input.checked;
     const res=await state.form.save(data);toast(res?.message||'Thao tác thành công.');}
@@ -244,5 +300,5 @@ document.addEventListener('submit',async e=>{
 });
 (async function init(){try{
  const a=await fetch('/api/auth/me',{credentials:'same-origin'});if(!a.ok){$('#root').innerHTML='<div class="boot">Bạn cần <a href="/">đăng nhập TrọFlow</a> trước.</div>';return;}
- const auth=await a.json();state.auth=auth;state.csrf=auth.csrf;await refresh();
+ const auth=await a.json();state.auth=auth;state.csrf=auth.csrf;if(!can(pageAbility[state.page]))state.page=PAGES.find(([key])=>can(pageAbility[key]))?.[0]||'overview';await refresh();
  }catch(e){$('#root').innerHTML=`<div class="boot">Không thể kết nối máy chủ: ${esc(e.message)} <a href="/">Trở về</a></div>`;}})();

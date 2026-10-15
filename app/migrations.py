@@ -88,7 +88,7 @@ def _backup_before_upgrade(con, db_path):
     backup_dir = Path(os.getenv('BACKUP_DIRECTORY','/app/backups')) / 'migrations'
     backup_dir.mkdir(parents=True,exist_ok=True)
     stamp = datetime.now().strftime('%Y%m%d-%H%M%S-%f')
-    destination = backup_dir / f'troflow-v1-before-v2-{stamp}.sqlite3'
+    destination = backup_dir / f'troflow-before-v3-{stamp}.sqlite3'
     with closing(sqlite3.connect(str(destination))) as dest:
         con.backup(dest)
         if dest.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
@@ -99,7 +99,7 @@ def _backup_before_upgrade(con, db_path):
 
 def migrate(con, db_path, existed_before_init=True):
     version=con.execute('PRAGMA user_version').fetchone()[0]
-    if version >= 2:
+    if version >= 3:
         return
     # v1 deployments historically had user_version=0; detect existence of legacy tables.
     if existed_before_init:
@@ -121,7 +121,24 @@ def migrate(con, db_path, existed_before_init=True):
         con.execute('CREATE INDEX IF NOT EXISTS idx_residents_contract ON contract_residents(contract_id)')
         con.execute('CREATE INDEX IF NOT EXISTS idx_deposits_contract ON deposit_transactions(contract_id)')
         con.execute('CREATE INDEX IF NOT EXISTS idx_invoice_status ON invoices(status,period)')
-        con.execute('PRAGMA user_version=2')
+        con.execute('''CREATE TABLE IF NOT EXISTS user_permissions (
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          permission_key TEXT NOT NULL, allowed INTEGER NOT NULL CHECK(allowed IN (0,1)),
+          PRIMARY KEY(user_id,permission_key))''')
+        con.execute('''CREATE TABLE IF NOT EXISTS rent_prepayment_batches (
+          id INTEGER PRIMARY KEY,contract_id INTEGER NOT NULL REFERENCES contracts(id),
+          paid_on TEXT NOT NULL,method TEXT NOT NULL CHECK(method IN ('cash','transfer','other')),
+          total INTEGER NOT NULL CHECK(total>0),note TEXT NOT NULL DEFAULT '',
+          created_by INTEGER REFERENCES users(id),created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)''')
+        con.execute('''CREATE TABLE IF NOT EXISTS rent_coverage (
+          id INTEGER PRIMARY KEY,batch_id INTEGER NOT NULL REFERENCES rent_prepayment_batches(id),
+          contract_id INTEGER NOT NULL REFERENCES contracts(id),period TEXT NOT NULL,
+          amount INTEGER NOT NULL CHECK(amount>0),status TEXT NOT NULL DEFAULT 'active'
+          CHECK(status IN ('active','refunded')),refunded_on TEXT,
+          CHECK (length(period)=7))''')
+        con.execute('CREATE INDEX IF NOT EXISTS idx_rent_coverage_contract ON rent_coverage(contract_id,period)')
+        con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_rent_active_month ON rent_coverage(contract_id,period) WHERE status='active'")
+        con.execute('PRAGMA user_version=3')
         con.commit()
     except Exception:
         con.rollback()

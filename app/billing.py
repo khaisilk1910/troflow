@@ -18,7 +18,12 @@ def calculate(con,contract,period,adjustment=0,discount=0,surcharge=0,require_re
         raise ValueError('Hợp đồng không hoạt động trong kỳ này.')
     days_in_month=(last-first).days+1
     days_occupied=(finish-start).days+1
-    rent=round(contract['monthly_rent']*days_occupied/days_in_month) if contract.get('prorate',0) else contract['monthly_rent']
+    contractual_rent=round(contract['monthly_rent']*days_occupied/days_in_month) if contract.get('prorate',0) else contract['monthly_rent']
+    advance=one(con,"SELECT amount FROM rent_coverage WHERE contract_id=? AND period=? AND status='active'",(contract['id'],period))
+    prepaid_rent=advance['amount'] if advance else 0
+    if prepaid_rent and prepaid_rent!=contractual_rent:
+        raise ValueError('Tiền thuê trả trước không khớp giá hợp đồng của kỳ này; cần đối soát.')
+    rent=contractual_rent-prepaid_rent
     property_id=contract['property_id']
     prop=one(con,'SELECT * FROM properties WHERE id=?',(property_id,))
     reading=one(con,'SELECT * FROM readings WHERE room_id=? AND period=?',(contract['room_id'],period))
@@ -28,7 +33,9 @@ def calculate(con,contract,period,adjustment=0,discount=0,surcharge=0,require_re
     wu=round(reading['water_new']-reading['water_old'],3) if reading else 0
     electricity=round(eu*prop['electric_rate']);water=round(wu*prop['water_rate'])
     lines=[{'label':'Tiền thuê phòng','code':'rent','quantity':days_occupied if contract.get('prorate',0) else 1,
-            'unit_price':contract['monthly_rent'],'amount':rent},
+            'unit_price':contract['monthly_rent'],'amount':contractual_rent},
+           *([{'label':'Đã thu tiền phòng trước ('+period+')','code':'prepaid_rent','quantity':1,
+              'unit_price':-prepaid_rent,'amount':-prepaid_rent}] if prepaid_rent else []),
            {'label':'Tiền điện','code':'electric','quantity':eu,'unit_price':prop['electric_rate'],'amount':electricity},
            {'label':'Tiền nước','code':'water','quantity':wu,'unit_price':prop['water_rate'],'amount':water}]
     services=prop['service_fee']
@@ -58,7 +65,8 @@ def calculate(con,contract,period,adjustment=0,discount=0,surcharge=0,require_re
     following_month=1 if first.month==12 else first.month+1
     due=f'{following_year:04d}-{following_month:02d}-{contract["due_day"]:02d}'
     details={'days_occupied':days_occupied,'days_in_month':days_in_month,'prorated':bool(contract.get('prorate',0)),
-             'occupants':num_people,'lines':lines,'carry_display_only':True}
+             'occupants':num_people,'lines':lines,'carry_display_only':True,
+             'contractual_rent':contractual_rent,'prepaid_rent':prepaid_rent}
     return {'rent':rent,'electricity':electricity,'water':water,'services':services,'adjustment':adjustment,
             'discount':discount,'surcharge':surcharge,'carried_debt':balance,'electric_usage':eu,'water_usage':wu,
             'total':total,'due_date':due,'calculation_json':json.dumps(details,ensure_ascii=False), 'lines':lines}

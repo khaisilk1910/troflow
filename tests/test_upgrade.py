@@ -163,11 +163,11 @@ class UpgradeTests(unittest.TestCase):
         db.DB_PATH=legacy
         db.init_db();db.init_db()
         with db.connect() as con:
-            self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],2)
+            self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],3)
             self.assertEqual(con.execute('SELECT COUNT(*) FROM contract_residents').fetchone()[0],1)
             self.assertEqual(con.execute('SELECT name FROM properties WHERE id=1').fetchone()[0],'Cơ sở cũ')
             self.assertEqual(con.execute('SELECT prorate FROM contracts WHERE id=1').fetchone()[0],0)
         backdir=self.data/'backups'/'migrations'
-        self.assertEqual(len(list(backdir.glob('troflow-v1-before-v2-*.sqlite3'))),1)
+        self.assertEqual(len(list(backdir.glob('troflow-before-v3-*.sqlite3'))),1)
 
 if __name__=='__main__':unittest.main()

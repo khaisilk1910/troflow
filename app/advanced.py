@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse, Response
 from .db import connect, tx, one, rows
 from . import db as dbmodule
 from .billing import calculate, create, month_range
-from .main import authorized, admin_user, fail, positive, trim, date_str, period_str, enum, audit, json_ok, CONTRACT_SQL
+from .main import authorized, admin_user, fail, positive, trim, date_str, period_str, enum, audit, json_ok, CONTRACT_SQL, occupied_contract
 
 router = APIRouter(prefix='/api/v2', tags=['TroFlow 2'])
 UPLOADS=Path(os.getenv('UPLOAD_DIRECTORY','/app/uploads'))
@@ -29,13 +29,7 @@ BACKUPS=Path(os.getenv('BACKUP_DIRECTORY','/app/backups'))
 def right(user, property_id=None, permission='view'):
     """Admin unrestricted. Existing staff maps to manager; grants restrict property ids."""
     if user['role']=='admin': return
-    job=user.get('job_role') or 'manager'
-    allowed={'manager':{'view','residents','deposits','billing','reading','handover','services','imports'},
-             'accountant':{'view','deposits','billing','reading','services','imports'},
-             'collector':{'view','deposits','billing'},
-             'maintenance':{'view','reading','handover'},
-             'viewer':{'view'}}
-    if permission not in allowed.get(job,{'view'}): fail('Vai trò không có quyền thực hiện thao tác.',403)
+    # Capability checks are centralized in authorized(); here enforce property scope.
     grant_ids=user.get('grant_ids',[])
     if property_id is not None and grant_ids and int(property_id) not in grant_ids:
         fail('Không được truy cập cơ sở này.',403)
@@ -251,6 +245,8 @@ def remove_assigned_service(ident:int,user=Depends(authorized)):
 def contract_proration(ident:int,data:dict,user=Depends(authorized)):
     with tx() as con:
         pid=contract_property(con,ident);right(user,pid,'billing')
+        if one(con,"SELECT 1 FROM rent_coverage WHERE contract_id=? AND status='active' LIMIT 1",(ident,)):
+            fail('Hợp đồng đã nhận tiền thuê trả trước. Không thể thay đổi cách tính theo ngày trước khi quyết toán.')
         con.execute('UPDATE contracts SET prorate=? WHERE id=?',(1 if data.get('enabled') else 0,ident))
         audit(con,user,'update','contract_proration',ident)
     return json_ok()
@@ -266,6 +262,10 @@ def readings_batch(data:dict,user=Depends(authorized)):
         for entry in entries:
             rid=positive(entry.get('room_id'),'Phòng',1)
             right(user,room_property(con,rid),'reading')
+            if user['role']!='admin' and not user['permissions'].get('readings.record'):
+                fail('Chưa được cấp quyền ghi chỉ số.',403)
+            if not occupied_contract(con,rid,period):
+                fail(f'Phòng #{rid} chưa có người thuê / hợp đồng trong kỳ {period}.')
             vals=[float(entry.get(k,0)) for k in ('electric_old','electric_new','water_old','water_new')]
             if any(x<0 or x>10_000_000 for x in vals) or vals[1]<vals[0] or vals[3]<vals[2]:fail('Chỉ số mới phải >= chỉ số cũ và không âm.')
             if one(con,'SELECT id FROM invoices WHERE room_id=? AND period=?',(rid,period)):
@@ -424,6 +424,11 @@ def handover(data:dict,user=Depends(authorized)):
         fail('Khấu trừ và hoàn cọc chỉ thực hiện khi trả phòng.')
     with tx() as con:
         contract=get_contract(con,cid);right(user,contract['property_id'],'handover')
+        if kind=='checkout' and user['role']!='admin':
+            if not user['permissions'].get('contracts.end'):
+                fail('Chưa được cấp quyền kết thúc hợp đồng.',403)
+            if (damage or money(data,'refund_amount')) and not user['permissions'].get('deposits.record'):
+                fail('Chưa được cấp quyền xử lý tiền cọc.',403)
         if kind=='checkout' and contract['status']!='active':fail('Hợp đồng đã kết thúc.')
         if handover_on<contract['start_date']:fail('Ngày bàn giao trước ngày hợp đồng bắt đầu.')
         try:
@@ -435,6 +440,9 @@ def handover(data:dict,user=Depends(authorized)):
               trim(data.get('confirmed_by'),'Người xác nhận',120),user['id'])).lastrowid
         except sqlite3.IntegrityError:fail('Hợp đồng đã có biên bản cùng loại.')
         if kind=='checkout':
+            future=one(con,'''SELECT COALESCE(SUM(amount),0) n FROM rent_coverage
+                WHERE contract_id=? AND period>? AND status='active' ''',(cid,handover_on[:7]))['n']
+            if future:fail(f'Còn {future:,} VND tiền thuê trả trước của các tháng sau ngày trả phòng. Hãy hoàn các tháng chưa dùng trước khi kết thúc hợp đồng.')
             unpaid=one(con,'''SELECT COALESCE(SUM(i.total-COALESCE(p.amount,0)),0) amount
                  FROM invoices i LEFT JOIN (SELECT invoice_id,SUM(amount) amount FROM payments GROUP BY invoice_id) p
                  ON p.invoice_id=i.id WHERE i.contract_id=? AND i.status='published' ''',(cid,))['amount']
@@ -479,6 +487,8 @@ def handover(data:dict,user=Depends(authorized)):
 @router.post('/files')
 async def upload_file(category:str=Form(...),related_id:int=Form(...),file:UploadFile=File(...),user=Depends(authorized)):
     category=enum(category,'Loại tệp',['electric','water','checkin','checkout'])
+    if user['role']!='admin' and category in ('electric','water') and not user['permissions'].get('readings.photos'):
+        fail('Chưa được cấp quyền tải ảnh công tơ.',403)
     contents=await file.read(3*1024*1024+1)
     if len(contents)>3*1024*1024 or len(contents)<24: fail('Ảnh phải dưới 3 MB và không rỗng.')
     if contents.startswith(b'\x89PNG\r\n\x1a\n'): ext='png'
@@ -564,6 +574,9 @@ def load_import_rows(raw,filename):
 
 def insert_import(con,entity,row,user):
     from .main import room_values,tenant_values
+    permission={'rooms':'rooms.create','tenants':'tenants.create','contracts':'contracts.create','readings':'readings.record'}.get(entity)
+    if user['role']!='admin' and not user['permissions'].get(permission,False):
+        fail('Chưa được cấp quyền thêm dữ liệu loại này.',403)
     if entity=='rooms':
         values=room_values(row); right(user,values['property_id'],'imports')
         if not one(con,'SELECT id FROM properties WHERE id=?',(values['property_id'],)):fail('Cơ sở không tồn tại.')
@@ -590,6 +603,7 @@ def insert_import(con,entity,row,user):
     if entity=='readings':
         rid=positive(row.get('room_id'),'Phòng',1);right(user,room_property(con,rid),'imports')
         period=period_str(row.get('period'))
+        if not occupied_contract(con,rid,period):fail('Không thể nhập chỉ số: phòng chưa có người thuê trong kỳ.')
         values=[float(row.get(k,0)) for k in ['electric_old','electric_new','water_old','water_new']]
         if any(x<0 or x>1e7 for x in values) or values[1]<values[0] or values[3]<values[2]:fail('Chỉ số không hợp lệ.')
         return con.execute('''INSERT INTO readings(room_id,period,electric_old,electric_new,water_old,water_new)
@@ -622,9 +636,18 @@ async def import_file(entity:str,file:UploadFile=File(...),dry_run:bool=True,use
 def access_list(user=Depends(admin_user)):
     with connect() as con:
         data=rows(con,'SELECT id,username,full_name,role,job_role,active FROM users ORDER BY id')
+        from .permissions import effective
         for item in data:
+            item['permissions']=effective(con,item)
             item['property_ids']=[x['property_id'] for x in rows(con,'SELECT property_id FROM property_grants WHERE user_id=?',(item['id'],))]
         return data
+
+@router.get('/access/catalog')
+def access_catalog(user=Depends(admin_user)):
+    from .permissions import GROUPS, ACTIONS, ADMIN_ONLY, ADMIN_RESERVED, defaults
+    return {'groups':[{'id':gid,'label':label,'actions':[{'key':gid+'.'+act,'label':ACTIONS.get(act,act),'locked':gid+'.'+act in ADMIN_RESERVED or gid in ADMIN_ONLY} for act in actions],
+                       'admin_only':gid in ADMIN_ONLY} for gid,label,actions in GROUPS],
+            'role_defaults':{role:defaults(role) for role in ('manager','accountant','collector','maintenance','viewer')}}
 
 @router.put('/access/{ident}')
 def access_update(ident:int,data:dict,user=Depends(admin_user)):
@@ -632,6 +655,13 @@ def access_update(ident:int,data:dict,user=Depends(admin_user)):
     grants=data.get('property_ids',[])
     if not isinstance(grants,list) or len(grants)>100:fail('Danh sách cơ sở không hợp lệ.')
     ids=[positive(x,'Cơ sở',1) for x in grants]
+    from .permissions import ALL_KEYS,ADMIN_ONLY,ADMIN_RESERVED
+    chosen=data.get('permissions')
+    if chosen is not None:
+        if not isinstance(chosen,dict) or set(chosen)!=ALL_KEYS or any(type(v) is not bool for v in chosen.values()):
+            fail('Danh sách quyền không đầy đủ hoặc có giá trị không hợp lệ.')
+        if any(chosen[k] for k in chosen if k.split('.')[0] in ADMIN_ONLY or k in ADMIN_RESERVED):
+            fail('Các chức năng quản trị và phục hồi dữ liệu chỉ dành cho Admin.')
     with tx() as con:
         account=one(con,'SELECT * FROM users WHERE id=?',(ident,))
         if not account:fail('Tài khoản không tồn tại.',404)
@@ -641,6 +671,10 @@ def access_update(ident:int,data:dict,user=Depends(admin_user)):
         con.execute('UPDATE users SET job_role=? WHERE id=?',(job,ident))
         con.execute('DELETE FROM property_grants WHERE user_id=?',(ident,))
         for pid in set(ids):con.execute('INSERT INTO property_grants(user_id,property_id) VALUES(?,?)',(ident,pid))
+        if chosen is not None:
+            con.execute('DELETE FROM user_permissions WHERE user_id=?',(ident,))
+            con.executemany('INSERT INTO user_permissions(user_id,permission_key,allowed) VALUES(?,?,?)',
+                [(ident,key,int(allow)) for key,allow in chosen.items()])
         con.execute('DELETE FROM sessions WHERE user_id=?',(ident,))
         audit(con,user,'update','access',ident)
     return json_ok()
@@ -728,6 +762,8 @@ def schedule_events(period:str|None=None,user=Depends(authorized)):
 @router.post('/schedules/run/{property_id}')
 def run_schedule(property_id:int,data:dict,user=Depends(authorized)):
     right(user,property_id,'billing')
+    if user['role']!='admin' and not user['permissions'].get('invoices.create'):
+        fail('Chưa được cấp quyền lập hóa đơn.',403)
     period=period_str(data.get('period',date.today().strftime('%Y-%m')))
     from .scheduler import run_billing_period
     result=run_billing_period(property_id,period,user)
