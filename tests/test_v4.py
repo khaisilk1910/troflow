@@ -26,7 +26,7 @@ class V4IntegrationTests(unittest.TestCase):
   self.head={'X-CSRF-Token':r.json()['csrf']}
   self.prop=self.req('POST','properties',{'name':'Nhà 1','service_fee':100000}).json()['id']
   self.room=self.req('POST','rooms',{'property_id':self.prop,'code':'P01','rent':2000000}).json()['id']
-  self.tenant=self.req('POST','tenants',{'full_name':'Người A','phone':'0912345678'}).json()['id']
+  self.tenant=self.req('POST','tenants',{'full_name':'Người A','phone':'0912345678','id_number':'001234567890'}).json()['id']
   self.contract=self.req('POST','contracts',{'room_id':self.room,'tenant_id':self.tenant,'start_date':'2026-01-01','end_date':'2027-12-31','monthly_rent':2000000}).json()['id']
   self.reader={'room_id':self.room,'period':'2026-06','electric_old':10,'electric_new':20,'water_old':2,'water_new':4}
  def tearDown(self):
@@ -48,7 +48,7 @@ class V4IntegrationTests(unittest.TestCase):
   self.req('PUT',f'readings/{id1}',{**self.reader,'period':'2026-09'},409)
  def test_tenant_meter_photos_and_version(self):
   with db.connect() as con:
-   self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],4)
+   self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],5)
    self.assertIn('photo_path',{r[1] for r in con.execute('PRAGMA table_info(tenants)')})
   id1=self.req('POST','readings',self.reader).json()['id']
   for category,ref in [('tenant',self.tenant),('electric',id1),('water',id1)]:
@@ -75,7 +75,7 @@ class V4IntegrationTests(unittest.TestCase):
   uid=self.req('POST','users',{'username':'employee','full_name':'Nhân viên','password':'Employee-password123','role':'staff'}).json()['id']
   newprop=self.req('POST','properties',{'name':'Cơ sở khác'}).json()['id']
   other=self.req('POST','rooms',{'property_id':newprop,'code':'P99','rent':2000000}).json()['id']
-  t=self.req('POST','tenants',{'full_name':'B','phone':'0909'}).json()['id']
+  t=self.req('POST','tenants',{'full_name':'B','phone':'0909','id_number':'001234567890'}).json()['id']
   self.req('POST','contracts',{'room_id':other,'tenant_id':t,'start_date':'2026-01-01','end_date':'2027-12-31','monthly_rent':2000000})
   other_id=self.req('POST','readings',{**self.reader,'room_id':other}).json()['id']
   from app.permissions import defaults

@@ -18,7 +18,7 @@ def months_between(start,end):
 def list_prepayments(user=Depends(authorized)):
     with connect() as con:
         r=rows(con,'''SELECT x.*,b.paid_on,b.method,b.note,b.total batch_total,
-          c.monthly_rent,c.status contract_status,t.full_name tenant_name,t.phone tenant_phone,
+          c.monthly_rent,c.status contract_status,t.full_name tenant_name,t.phone tenant_phone,t.id_number tenant_id_number,t.photo_path tenant_photo_path,
           r.code room_code,r.property_id,p.name property_name
           FROM rent_coverage x JOIN rent_prepayment_batches b ON b.id=x.batch_id
           JOIN contracts c ON c.id=x.contract_id JOIN tenants t ON t.id=c.tenant_id

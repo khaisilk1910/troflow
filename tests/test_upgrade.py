@@ -45,7 +45,7 @@ class UpgradeTests(unittest.TestCase):
     def setup_contract(self,number='101',rent=3000000,service_fee=100000):
         pid=self.req('POST','properties',{'name':'Cơ sở '+number,'electric_rate':3500,'water_rate':20000,'service_fee':service_fee}) .json()['id']
         roomid=self.req('POST','rooms',{'property_id':pid,'code':number,'rent':rent,'deposit':rent}).json()['id']
-        tid=self.req('POST','tenants',{'full_name':'Nguyễn Minh Anh','phone':'0900000000'}).json()['id']
+        tid=self.req('POST','tenants',{'full_name':'Nguyễn Minh Anh','phone':'0900000000','id_number':'001234567890'}).json()['id']
         cid=self.req('POST','contracts',{'room_id':roomid,'tenant_id':tid,'start_date':self.first,'end_date':self.last,
                     'monthly_rent':rent,'deposit':rent,'occupants':2}).json()['id']
         return pid,roomid,tid,cid
@@ -96,7 +96,7 @@ class UpgradeTests(unittest.TestCase):
         from openpyxl import Workbook
         out=io.BytesIO();w=Workbook();sheet=w.active
         sheet.append(['full_name','phone','email','id_number','hometown','notes'])
-        sheet.append(['Tú Trọ','0123456789','','','',''])
+        sheet.append(['Tú Trọ','0123456789','','001234567891','',''])
         w.save(out);out.seek(0)
         files={'file':('tenants.xlsx',out.getvalue(),'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')}
         self.req('POST','v2/imports/tenants?dry_run=true',files=files)
@@ -163,7 +163,7 @@ class UpgradeTests(unittest.TestCase):
         db.DB_PATH=legacy
         db.init_db();db.init_db()
         with db.connect() as con:
-            self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],4)
+            self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],5)
             self.assertEqual(con.execute('SELECT COUNT(*) FROM contract_residents').fetchone()[0],1)
             self.assertEqual(con.execute('SELECT name FROM properties WHERE id=1').fetchone()[0],'Cơ sở cũ')
             self.assertEqual(con.execute('SELECT prorate FROM contracts WHERE id=1').fetchone()[0],0)

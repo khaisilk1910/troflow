@@ -26,3 +26,17 @@ svg{flex-shrink:0}.icon{width:18px;height:18px;stroke:currentColor;stroke-width:
 .entity-upload input{width:100%;font-size:12px}
 .reading-thumbs{display:flex;gap:7px;margin-top:6px}
 .reading-thumbs img{width:46px;height:46px;object-fit:cover;border-radius:8px}
+/* V5 identity documents, utilities and dashboard priority */
+.dashboard-focus{margin-bottom:21px}
+.dashboard-focus .card{padding:20px 24px}
+.dashboard-focus .alerts-list{min-height:44px}
+.dashboard-focus .quick-actions{grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.tenant-identity{min-width:170px;gap:10px;align-items:center}
+.tenant-identity small{font-size:11px;line-height:1.45;white-space:normal;word-break:break-word}
+.id-card-photos{display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-top:18px}
+.id-card-photos>div{min-width:0}
+.id-photo{width:100%;max-height:155px;object-fit:contain;border-radius:11px;border:1px solid #dfe7ef;background:#fff;margin-bottom:8px}
+.utility-disclaimer{margin:14px 18px}
+.utility-metrics .metric-foot{line-height:1.45}
+@media(max-width:960px){.dashboard-focus .quick-actions{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:650px){.id-card-photos{grid-template-columns:1fr}.dashboard-focus .quick-actions{grid-template-columns:1fr 1fr}.utility-metrics .metric-num{font-size:18px}}

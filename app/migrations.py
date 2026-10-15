@@ -18,6 +18,7 @@ COLUMNS = {
  'invoices': {'status': "TEXT NOT NULL DEFAULT 'published'", 'discount': 'INTEGER NOT NULL DEFAULT 0',
               'surcharge': 'INTEGER NOT NULL DEFAULT 0', 'carried_debt': 'INTEGER NOT NULL DEFAULT 0',
               'calculation_json': "TEXT NOT NULL DEFAULT '{}'", 'published_at': 'TEXT'},
+ 'tenants': {'id_front_path':'TEXT', 'id_back_path':'TEXT'},
  'properties': {'bank_code': "TEXT NOT NULL DEFAULT ''", 'bank_account': "TEXT NOT NULL DEFAULT ''",
                 'bank_name': "TEXT NOT NULL DEFAULT ''"},
 }
@@ -99,7 +100,7 @@ def _backup_before_upgrade(con, db_path):
 
 def migrate(con, db_path, existed_before_init=True):
     version=con.execute('PRAGMA user_version').fetchone()[0]
-    if version >= 4:
+    if version >= 5:
         return
     # v1 deployments historically had user_version=0; detect existence of legacy tables.
     if existed_before_init:
@@ -141,7 +142,34 @@ def migrate(con, db_path, existed_before_init=True):
         columns={r[1] for r in con.execute('PRAGMA table_info(tenants)')}
         if 'photo_path' not in columns:
             con.execute('ALTER TABLE tenants ADD COLUMN photo_path TEXT')
-        con.execute('PRAGMA user_version=4')
+        con.execute('''CREATE TABLE IF NOT EXISTS utility_meters (
+          id INTEGER PRIMARY KEY,
+          property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE RESTRICT,
+          kind TEXT NOT NULL CHECK(kind IN ('electric','water')),
+          meter_number TEXT NOT NULL,
+          customer_code TEXT NOT NULL,
+          supplier TEXT NOT NULL DEFAULT '',
+          label TEXT NOT NULL DEFAULT '',
+          notes TEXT NOT NULL DEFAULT '',
+          active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(property_id,kind,meter_number))''')
+        con.execute('''CREATE TABLE IF NOT EXISTS utility_meter_periods (
+          id INTEGER PRIMARY KEY,
+          meter_id INTEGER NOT NULL REFERENCES utility_meters(id) ON DELETE RESTRICT,
+          period TEXT NOT NULL CHECK(length(period)=7),
+          reading_old REAL NOT NULL DEFAULT 0 CHECK(reading_old>=0),
+          reading_new REAL NOT NULL DEFAULT 0 CHECK(reading_new>=reading_old),
+          billed_usage REAL NOT NULL DEFAULT 0 CHECK(billed_usage>=0),
+          bill_amount INTEGER NOT NULL DEFAULT 0 CHECK(bill_amount>=0),
+          paid_amount INTEGER NOT NULL DEFAULT 0 CHECK(paid_amount>=0 AND paid_amount<=bill_amount),
+          paid_on TEXT,
+          note TEXT NOT NULL DEFAULT '',
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(meter_id,period))''')
+        con.execute('CREATE INDEX IF NOT EXISTS idx_utility_meter_period ON utility_meter_periods(period,meter_id)')
+        con.execute('CREATE INDEX IF NOT EXISTS idx_utility_meter_property ON utility_meters(property_id,kind)')
+        con.execute('PRAGMA user_version=5')
         con.commit()
     except Exception:
         con.rollback()

@@ -1,3 +1,9 @@
+# TrọFlow 5.0
+
+**Hướng dẫn nâng cấp V5:** xem [README-V5.md](README-V5.md). Dự án giữ đầy đủ tính năng V1–V4 và hỗ trợ Docker/Portainer/GitHub Actions.
+
+---
+
 # TrọFlow 4.0 — bản mới nhất
 
 **Đọc [README-V4.md](README-V4.md) trước khi cập nhật**. Gồm tính năng, migration, quyền, ảnh, Stack, GHCR và QA staging.

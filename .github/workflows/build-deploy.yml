@@ -30,6 +30,11 @@ jobs:
           python -m pip install -r requirements.txt 'httpx>=0.27,<1'
       - name: Run business workflow tests
         run: python -m unittest discover -s tests -v
+      - name: Validate web UI syntax and render
+        run: |
+          node --check app/static/app.js
+          node --check app/static/advanced.js
+          node tests/js_smoke.js
 
   publish:
     name: Build image and optionally trigger Portainer

@@ -1,0 +1,12 @@
+const vm=require('vm'),fs=require('fs'),path=require('path');
+const source=fs.readFileSync(path.resolve(__dirname,'../app/static/app.js'),'utf8').replace(/\binit\(\);\s*$/,'');
+const context={console,document:{addEventListener(){}},window:{},setTimeout(){},URLSearchParams,Date,Number,String,Math,Array};
+vm.createContext(context);vm.runInContext(source,context,{timeout:2000});
+const script=`state.user={role:'admin',full_name:'Admin'};state.data={properties:[{id:1,name:'Dãy A'}],rooms:[{id:1,code:'P01',property_id:1,property_name:'Dãy A',tenant_name:'An',tenant_phone:'09000',tenant_id_number:'001234567890',tenant_photo_path:null,status:'occupied'}],tenants:[{id:1,full_name:'An',phone:'09000',id_number:'001234567890',photo_path:null,active_contracts:1}],contracts:[],readings:[],invoices:[],payments:[],expenses:[],tickets:[],dashboard:{rooms_total:1,occupied:1,trends:[],properties:[],alerts:[]},utilitymeters:[{id:1,property_id:1,property_name:'Dãy A',kind:'electric',meter_number:'E01',customer_code:'KH001',active:1,bill_count:0}],utilitybills:[],utilityreport:{items:[],totals:{},method:'Mô tả'}};
+ const rendered=[pageDashboard(),pageUtilityMeters(),pageTenants(),pageRooms(),pageReadings(),pageInvoices()];
+ if(!rendered[0].includes('Công việc cần chú ý')||rendered[0].indexOf('Công việc cần chú ý')>rendered[0].indexOf('TỔNG SỐ PHÒNG'))throw Error('Dashboard order is wrong');
+ if(!rendered[1].includes('KH001'))throw Error('Utility meter not rendered');
+ if(!rendered[2].includes('001234567890'))throw Error('Tenant CCCD hidden');
+ if(!rendered.every(x=>x.length>200))throw Error('Empty rendering');
+ rendered.map(x=>x.length)`;
+const lengths=vm.runInContext(script,context,{timeout:2000});console.log('Rendered 6 views successfully',lengths);

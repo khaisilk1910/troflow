@@ -5,6 +5,7 @@ from .db import rows
 
 GROUPS = [
  ('dashboard','Tổng quan',['view']),('properties','Cơ sở',['view','create','edit','delete']),
+ ('utilitymeters','Công tơ & điện nước tổng',['view','create','edit','delete','record','deletebill','report']),
  ('rooms','Phòng trọ',['view','create','edit','delete']),('tenants','Người thuê',['view','create','edit','delete']),
  ('contracts','Hợp đồng',['view','create','edit','delete','end','proration']),
  ('readings','Điện nước',['view','record','edit','delete','batch','photos']),
@@ -28,25 +29,25 @@ GROUPS = [
 ACTIONS={'view':'Xem','create':'Thêm','edit':'Sửa','delete':'Xóa','record':'Ghi nhận',
          'batch':'Ghi hàng loạt','photos':'Ảnh công tơ','publish':'Duyệt chốt','preview':'Xem trước',
          'pdf':'Xuất PDF','vietqr':'VietQR','end':'Kết thúc','proration':'Tính ngày',
-         'refund':'Hoàn / hủy','leave':'Báo rời','assign':'Gán dịch vụ','remove':'Ngừng dịch vụ',
+         'deletebill':'Xóa kỳ','report':'Thống kê lãi lỗ','refund':'Hoàn / hủy','leave':'Báo rời','assign':'Gán dịch vụ','remove':'Ngừng dịch vụ',
          'execute':'Thực hiện','upload':'Tải lên','verify':'Kiểm tra','restore':'Phục hồi'}
 ADMIN_ONLY={'users','access','backups','bank','audit'}
 ADMIN_RESERVED={'properties.create','properties.delete'}
 ALL_KEYS={f'{group}.{action}' for group,_,actions in GROUPS for action in actions}
 ROLE_MODULES={
- 'manager':{'dashboard','properties','rooms','tenants','contracts','readings','invoices','payments','prepayments',
+ 'manager':{'dashboard','properties','utilitymeters','rooms','tenants','contracts','readings','invoices','payments','prepayments',
             'deposits','residents','services','expenses','tickets','handovers','imports','schedules','reports','export','files'},
- 'accountant':{'dashboard','properties','rooms','tenants','contracts','readings','invoices','payments','prepayments',
+ 'accountant':{'dashboard','properties','utilitymeters','rooms','tenants','contracts','readings','invoices','payments','prepayments',
             'deposits','services','expenses','reports','export','imports','files'},
  'collector':{'dashboard','properties','rooms','tenants','contracts','invoices','payments','prepayments','deposits','reports'},
- 'maintenance':{'dashboard','properties','rooms','tenants','contracts','readings','tickets','handovers','files'},
+ 'maintenance':{'dashboard','properties','utilitymeters','rooms','tenants','contracts','readings','tickets','handovers','files'},
  'viewer':{group for group,_,_ in GROUPS if group not in ADMIN_ONLY}
 }
 ROLE_WRITE={
- 'manager':{'rooms','tenants','contracts','readings','invoices','payments','prepayments','deposits','residents','services','expenses','tickets','handovers','imports','schedules','files'},
- 'accountant':{'readings','invoices','payments','prepayments','deposits','services','expenses','imports','files'},
+ 'manager':{'utilitymeters','rooms','tenants','contracts','readings','invoices','payments','prepayments','deposits','residents','services','expenses','tickets','handovers','imports','schedules','files'},
+ 'accountant':{'utilitymeters','readings','invoices','payments','prepayments','deposits','services','expenses','imports','files'},
  'collector':{'payments','prepayments','deposits'},
- 'maintenance':{'readings','tickets','handovers','files'},'viewer':set()
+ 'maintenance':{'utilitymeters','readings','tickets','handovers','files'},'viewer':set()
 }
 
 def defaults(job):
@@ -102,6 +103,13 @@ def route_permission(path,method):
         if mod=='properties' and 'bank' in p:return 'bank.edit'
         if mod=='prepayments':return 'prepayments.view' if method=='GET' else ('prepayments.refund' if 'refund' in p else 'prepayments.record')
         return None
+    if mod=='utility-meters':
+        if method=='GET':return 'utilitymeters.view'
+        return 'utilitymeters.delete' if method=='DELETE' else 'utilitymeters.create' if method=='POST' else 'utilitymeters.edit'
+    if mod=='utility-bills':
+        if method=='GET':return 'utilitymeters.view'
+        return 'utilitymeters.deletebill' if method=='DELETE' else 'utilitymeters.record'
+    if mod=='utility-report':return 'utilitymeters.report'
     if mod=='dashboard':return 'dashboard.view'
     if mod=='reports':return 'reports.view'
     if mod=='export':return 'export.execute'

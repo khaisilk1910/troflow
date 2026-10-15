@@ -32,7 +32,7 @@ class Version3Tests(unittest.TestCase):
         self.prop=self.api('POST','properties',{'name':'Khu Nam','service_fee':90000,'electric_rate':3500,'water_rate':20000}).json()['id']
         self.room=self.api('POST','rooms',{'property_id':self.prop,'code':'A1','rent':3000000}).json()['id']
         self.empty=self.api('POST','rooms',{'property_id':self.prop,'code':'A2','rent':3000000}).json()['id']
-        tenant=self.api('POST','tenants',{'full_name':'Trần Thanh Hoa','phone':'0901000000'}).json()['id']
+        tenant=self.api('POST','tenants',{'full_name':'Trần Thanh Hoa','phone':'0901000000','id_number':'001234567890'}).json()['id']
         self.contract=self.api('POST','contracts',{'room_id':self.room,'tenant_id':tenant,'start_date':start,'end_date':end,
                                   'monthly_rent':3000000,'deposit':3000000}).json()['id']
     def tearDown(self):self.client.close();self.temp.cleanup()
@@ -146,7 +146,7 @@ class Version3Tests(unittest.TestCase):
             con.execute('INSERT INTO audit_logs(action,entity) VALUES(?,?)',('before','migration'))
         db.init_db()
         with db.connect() as con:
-            self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],4)
+            self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],5)
             self.assertEqual(con.execute("SELECT COUNT(*) FROM audit_logs WHERE action='before'").fetchone()[0],1)
             self.assertEqual(con.execute('PRAGMA integrity_check').fetchone()[0],'ok')
         self.assertEqual(len(list((Path(self.temp.name)/'backups'/'migrations').glob('*.sqlite3'))),1)

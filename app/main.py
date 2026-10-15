@@ -441,7 +441,7 @@ def delete_property(ident:int,user=Depends(authorized)):
     return json_ok()
 
 ROOM_SQL = '''SELECT r.*, p.name property_name, c.id contract_id, c.tenant_id,
-              t.full_name tenant_name, c.end_date contract_end,
+              t.full_name tenant_name,t.phone tenant_phone,t.id_number tenant_id_number,t.photo_path tenant_photo_path, c.end_date contract_end,
               CASE WHEN c.id IS NOT NULL THEN 'occupied' ELSE r.condition END status
               FROM rooms r JOIN properties p ON p.id=r.property_id
               LEFT JOIN contracts c ON c.room_id=r.id AND c.status='active'
@@ -509,15 +509,18 @@ def tenants(user=Depends(authorized)):
     with connect() as con:
         return scope_records(user,rows(con,TENANT_SQL+' ORDER BY t.id DESC'),tenant_list=True)
 
-def tenant_values(data):
+def tenant_values(data, creating=False):
+    id_number=trim(data.get('id_number'),'CCCD',30,creating)
+    if id_number and not re.fullmatch(r'(?:[0-9]{9}|[0-9]{12})',id_number):
+        fail('CCCD/CMND phải có 9 hoặc 12 chữ số.')
     return dict(full_name=trim(data.get('full_name'),'họ tên',120,True),phone=trim(data.get('phone'),'số điện thoại',30,True),
-                email=trim(data.get('email'),'email',120),id_number=trim(data.get('id_number'),'CCCD',30),
+                email=trim(data.get('email'),'email',120),id_number=id_number,
                 hometown=trim(data.get('hometown'),'quê quán',250),notes=trim(data.get('notes'),'ghi chú',1000))
 
 @app.post('/api/tenants')
 def add_tenant(data:dict,user=Depends(authorized)):
     with tx() as con:
-        ident=insert(con,'tenants',tenant_values(data))
+        ident=insert(con,'tenants',tenant_values(data,creating=True))
         audit(con,user,'create','tenant',ident)
     return json_ok(id=ident)
 
@@ -540,7 +543,7 @@ def delete_tenant(ident:int,user=Depends(authorized)):
     return json_ok()
 
 CONTRACT_SQL = '''SELECT c.*,r.code room_code,r.property_id,p.name property_name,
-                  t.full_name tenant_name,t.phone tenant_phone FROM contracts c
+                  t.full_name tenant_name,t.phone tenant_phone,t.id_number tenant_id_number,t.photo_path tenant_photo_path FROM contracts c
                   JOIN rooms r ON r.id=c.room_id JOIN properties p ON p.id=r.property_id
                   JOIN tenants t ON t.id=c.tenant_id'''
 @app.get('/api/contracts')
@@ -648,7 +651,16 @@ READING_SQL = '''SELECT d.*,r.code room_code,r.property_id,p.name property_name,
                  (SELECT t.full_name FROM contracts c JOIN tenants t ON t.id=c.tenant_id
                   WHERE c.room_id=d.room_id AND c.start_date<=date(d.period||'-01','start of month','+1 month','-1 day')
                    AND c.end_date>=d.period||'-01'
-                  ORDER BY CASE c.status WHEN 'active' THEN 0 ELSE 1 END,c.id DESC LIMIT 1) tenant_name
+                  ORDER BY CASE c.status WHEN 'active' THEN 0 ELSE 1 END,c.id DESC LIMIT 1) tenant_name,
+                 (SELECT t.phone FROM contracts c JOIN tenants t ON t.id=c.tenant_id
+                   WHERE c.room_id=d.room_id AND c.start_date<=date(d.period||'-01','start of month','+1 month','-1 day')
+                   AND c.end_date>=d.period||'-01' ORDER BY c.id DESC LIMIT 1) tenant_phone,
+                 (SELECT t.id_number FROM contracts c JOIN tenants t ON t.id=c.tenant_id
+                   WHERE c.room_id=d.room_id AND c.start_date<=date(d.period||'-01','start of month','+1 month','-1 day')
+                   AND c.end_date>=d.period||'-01' ORDER BY c.id DESC LIMIT 1) tenant_id_number,
+                 (SELECT t.photo_path FROM contracts c JOIN tenants t ON t.id=c.tenant_id
+                   WHERE c.room_id=d.room_id AND c.start_date<=date(d.period||'-01','start of month','+1 month','-1 day')
+                   AND c.end_date>=d.period||'-01' ORDER BY c.id DESC LIMIT 1) tenant_photo_path
                  FROM readings d JOIN rooms r ON r.id=d.room_id
                  JOIN properties p ON p.id=r.property_id'''
 @app.get('/api/readings')
@@ -732,7 +744,7 @@ def prev_reading(room_id:int,period:str,user=Depends(authorized)):
     return rec or {'electric_new':0,'water_new':0,'period':None}
 
 INVOICE_SQL = '''SELECT i.*,c.tenant_id,t.full_name tenant_name,t.phone tenant_phone,
-                 r.code room_code,r.property_id,p.name property_name,p.address property_address,
+                 r.code room_code,r.property_id,p.name property_name,p.address property_address,t.id_number tenant_id_number,t.photo_path tenant_photo_path,
                  COALESCE((SELECT SUM(amount) FROM payments WHERE invoice_id=i.id),0) paid,
                  i.total-COALESCE((SELECT SUM(amount) FROM payments WHERE invoice_id=i.id),0) balance
                  FROM invoices i JOIN contracts c ON c.id=i.contract_id
@@ -1007,7 +1019,7 @@ def dashboard(user=Depends(authorized)):
              (SELECT COUNT(*) FROM invoices i WHERE i.status='published' AND due_date<? AND total>
                   (SELECT COALESCE(SUM(amount),0) FROM payments WHERE invoice_id=i.id)) overdue''',
                 (today,(date.today()+timedelta(days=30)).isoformat(),today))
-        recent=rows(con,'''SELECT p.id,p.amount,p.paid_at,r.code room_code,t.full_name tenant_name,prop.name property_name
+        recent=rows(con,'''SELECT p.id,p.amount,p.paid_at,r.code room_code,t.full_name tenant_name,t.phone tenant_phone,t.id_number tenant_id_number,t.photo_path tenant_photo_path,prop.name property_name
                           FROM payments p JOIN invoices i ON i.id=p.invoice_id
                           JOIN contracts c ON c.id=i.contract_id JOIN rooms r ON r.id=i.room_id
                           JOIN properties prop ON prop.id=r.property_id JOIN tenants t ON t.id=c.tenant_id
@@ -1015,7 +1027,7 @@ def dashboard(user=Depends(authorized)):
         property_stats=rows(con,'''SELECT p.id,p.name,COUNT(r.id) total,
                   SUM(CASE WHEN EXISTS(SELECT 1 FROM contracts c WHERE c.room_id=r.id AND c.status='active') THEN 1 ELSE 0 END) occupied
                   FROM properties p LEFT JOIN rooms r ON r.property_id=p.id GROUP BY p.id ORDER BY p.id''')
-        alerts=rows(con,'''SELECT c.id,c.end_date,r.code room_code,t.full_name tenant_name,p.name property_name
+        alerts=rows(con,'''SELECT c.id,c.end_date,r.code room_code,t.full_name tenant_name,t.phone tenant_phone,t.id_number tenant_id_number,t.photo_path tenant_photo_path,p.name property_name
                            FROM contracts c JOIN rooms r ON r.id=c.room_id JOIN properties p ON p.id=r.property_id
                            JOIN tenants t ON t.id=c.tenant_id
                            WHERE c.status='active' AND c.end_date<=? ORDER BY c.end_date LIMIT 5''',
@@ -1172,3 +1184,6 @@ app.add_api_route("/advanced", advanced_page, methods=["GET"], include_in_schema
 
 from .prepayments import router as prepayments_router
 app.include_router(prepayments_router)
+
+from .utility import router as utility_router
+app.include_router(utility_router)

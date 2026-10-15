@@ -44,7 +44,7 @@ class WorkflowTests(unittest.TestCase):
     def test_real_management_workflow(self):
         p=self.post('properties',{'name':'Nhà trọ An Phú','address':'Bình Thạnh','electric_rate':3500,'water_rate':20000,'service_fee':100000})['id']
         r=self.post('rooms',{'property_id':p,'code':'A101','rent':3000000,'deposit':3000000,'area':23})['id']
-        t=self.post('tenants',{'full_name':'Nguyễn Minh Anh','phone':'0900000000','id_number':'012345678901'})['id']
+        t=self.post('tenants',{'full_name':'Nguyễn Minh Anh','phone':'0900000000','id_number':'001234567890','id_number':'012345678901'})['id']
         self.assertEqual(len(self.get('properties')),1)
         today=self.today.isoformat()
         next_year=self.today.replace(year=self.today.year+1).isoformat()
@@ -96,9 +96,9 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(forbidden.status_code,403,forbidden.text)
         self.assertEqual(other.get('/api/backup').status_code,403)
         self.assertEqual(other.get('/api/users').status_code,403)
-        denied=other.post('/api/tenants',json={'full_name':'A','phone':'123'},headers={})
+        denied=other.post('/api/tenants',json={'full_name':'A','phone':'123','id_number':'001234567890'},headers={})
         self.assertEqual(denied.status_code,403)
-        okay=other.post('/api/tenants',json={'full_name':'A','phone':'123'},headers={'x-csrf-token':token})
+        okay=other.post('/api/tenants',json={'full_name':'A','phone':'123','id_number':'001234567890'},headers={'x-csrf-token':token})
         self.assertEqual(okay.status_code,200,okay.text)
         other.close()
 

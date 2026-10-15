@@ -92,7 +92,7 @@ def summary(user=Depends(authorized)):
 def deposits(contract_id:int|None=None,user=Depends(authorized)):
     with connect() as con:
         sql='''SELECT d.*,c.deposit expected,r.code room_code,p.name property_name,r.property_id,
-          t.full_name tenant_name FROM deposit_transactions d JOIN contracts c ON c.id=d.contract_id
+          t.full_name tenant_name,t.phone tenant_phone,t.id_number tenant_id_number,t.photo_path tenant_photo_path FROM deposit_transactions d JOIN contracts c ON c.id=d.contract_id
           JOIN rooms r ON r.id=c.room_id JOIN properties p ON p.id=r.property_id
           JOIN tenants t ON t.id=c.tenant_id'''
         params=[]
@@ -104,7 +104,7 @@ def deposits(contract_id:int|None=None,user=Depends(authorized)):
 def deposit_balances(user=Depends(authorized)):
     with connect() as con:
         results=rows(con,'''SELECT c.id contract_id,c.deposit required_amount,c.status,r.code room_code,r.property_id,
-           p.name property_name,t.full_name tenant_name,
+           p.name property_name,t.full_name tenant_name,t.phone tenant_phone,t.id_number tenant_id_number,t.photo_path tenant_photo_path,
            COALESCE(SUM(CASE WHEN d.kind='receive' THEN d.amount WHEN d.kind IN ('refund','deduct') THEN -d.amount ELSE 0 END),0) held,
            COALESCE(SUM(CASE WHEN d.kind='receive' THEN d.amount ELSE 0 END),0) received,
            COALESCE(SUM(CASE WHEN d.kind='refund' THEN d.amount ELSE 0 END),0) refunded,
@@ -409,7 +409,7 @@ def vietqr(ident:int,user=Depends(authorized)):
 @router.get('/handovers')
 def handovers(user=Depends(authorized)):
     with connect() as con:
-        result=rows(con,'''SELECT h.*,r.code room_code,r.property_id,p.name property_name,t.full_name tenant_name
+        result=rows(con,'''SELECT h.*,r.code room_code,r.property_id,p.name property_name,t.full_name tenant_name,t.phone tenant_phone,t.id_number tenant_id_number,t.photo_path tenant_photo_path
           FROM handovers h JOIN contracts c ON c.id=h.contract_id JOIN rooms r ON r.id=c.room_id
           JOIN properties p ON p.id=r.property_id JOIN tenants t ON t.id=c.tenant_id ORDER BY h.id DESC''')
         return [x for x in result if user['role']=='admin' or not user.get('grant_ids') or x['property_id'] in user['grant_ids']]
@@ -486,7 +486,7 @@ def handover(data:dict,user=Depends(authorized)):
 # 05 + 08 PHOTOS. Private with authenticated fetch; validate basic file signatures.
 @router.post('/files')
 async def upload_file(category:str=Form(...),related_id:int=Form(...),file:UploadFile=File(...),user=Depends(authorized)):
-    category=enum(category,'Loại tệp',['electric','water','checkin','checkout','tenant'])
+    category=enum(category,'Loại tệp',['electric','water','checkin','checkout','tenant','tenant_id_front','tenant_id_back'])
     if user['role']!='admin' and category in ('electric','water') and not user['permissions'].get('readings.photos'):
         fail('Chưa được cấp quyền tải ảnh công tơ.',403)
     contents=await file.read(3*1024*1024+1)
@@ -496,7 +496,7 @@ async def upload_file(category:str=Form(...),related_id:int=Form(...),file:Uploa
     elif contents[:4]==b'RIFF' and contents[8:12]==b'WEBP':ext='webp'
     else:fail('Chỉ chấp nhận JPG, PNG hoặc WebP.')
     with tx() as con:
-        if category=='tenant':
+        if category in ('tenant','tenant_id_front','tenant_id_back'):
             if user['role']!='admin' and not user['permissions'].get('tenants.edit'):
                 fail('Chưa được cấp quyền cập nhật người thuê.',403)
             entity=one(con,'SELECT id FROM tenants WHERE id=?',(related_id,))
@@ -519,8 +519,9 @@ async def upload_file(category:str=Form(...),related_id:int=Form(...),file:Uploa
         dest=UPLOADS / name
         with open(dest,'xb') as f:f.write(contents)
         os.chmod(dest,0o600)
-        if category=='tenant':
-            con.execute('UPDATE tenants SET photo_path=? WHERE id=?',(name,related_id))
+        if category in ('tenant','tenant_id_front','tenant_id_back'):
+            column={'tenant':'photo_path','tenant_id_front':'id_front_path','tenant_id_back':'id_back_path'}[category]
+            con.execute(f'UPDATE tenants SET {column}=? WHERE id=?',(name,related_id))
         elif category in ('electric','water'):
             con.execute(f'UPDATE readings SET {category}_photo=? WHERE id=?',(name,related_id))
         else:
@@ -537,7 +538,7 @@ def fetch_file(name:str,user=Depends(authorized)):
         if not r:r=one(con,'''SELECT r.property_id FROM handovers h JOIN contracts c ON c.id=h.contract_id
             JOIN rooms r ON r.id=c.room_id WHERE h.photo_path=?''',(name,))
         if not r:
-            tenant=one(con,'SELECT id FROM tenants WHERE photo_path=?',(name,))
+            tenant=one(con,'SELECT id FROM tenants WHERE photo_path=? OR id_front_path=? OR id_back_path=?',(name,name,name))
             if tenant:
                 if user['role']!='admin' and not user['permissions'].get('tenants.view'):
                     fail('Chưa được cấp quyền xem ảnh khách thuê.',403)
@@ -606,7 +607,7 @@ def insert_import(con,entity,row,user):
         return con.execute(f"INSERT INTO rooms({','.join(values)}) VALUES({','.join('?' for _ in values)})",tuple(values.values())).lastrowid
     if entity=='tenants':
         right(user,permission='imports')
-        values=tenant_values(row)
+        values=tenant_values(row,creating=True)
         return con.execute(f"INSERT INTO tenants({','.join(values)}) VALUES({','.join('?' for _ in values)})",tuple(values.values())).lastrowid
     if entity=='contracts':
         roomid=positive(row.get('room_id'),'Phòng',1);tid=positive(row.get('tenant_id'),'Khách thuê',1)
@@ -853,7 +854,7 @@ def invoice_pdf(ident:int,user=Depends(authorized)):
 @router.get('/handovers/{ident}/pdf')
 def handover_pdf(ident:int,user=Depends(authorized)):
     with connect() as con:
-        h=one(con,'''SELECT h.*,r.property_id,r.code room_code,p.name property_name,t.full_name tenant_name
+        h=one(con,'''SELECT h.*,r.property_id,r.code room_code,p.name property_name,t.full_name tenant_name,t.phone tenant_phone,t.id_number tenant_id_number,t.photo_path tenant_photo_path
           FROM handovers h JOIN contracts c ON c.id=h.contract_id JOIN rooms r ON r.id=c.room_id
           JOIN properties p ON p.id=r.property_id JOIN tenants t ON t.id=c.tenant_id WHERE h.id=?''',(ident,))
         if not h:fail('Không tìm thấy biên bản.',404)
