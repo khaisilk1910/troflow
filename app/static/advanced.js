@@ -10,7 +10,10 @@ const PAGES=[
  ['services','Phí dịch vụ','◈'],['meters','Điện & nước','ϟ'],['invoices','Hóa đơn','▤'],
  ['handovers','Bàn giao phòng','⚿'],['imports','Nhập Excel','⇥'],['access','Phân quyền','⚙'],
  ['automation','Tự động hóa','↻'],['backups','Sao lưu','▦'],['bank','VietQR','◉']];
-const state={page:'overview',data:{},auth:null,csrf:'',form:null,filters:{period:period(),meterYear:Number(period().slice(0,4))},busy:false};
+const initialPage=new URLSearchParams(location.search).get('page');
+const embedded=new URLSearchParams(location.search).get('embedded')==='1';
+if(embedded)document.body.classList.add('embedded');
+const state={page:PAGES.some(x=>x[0]===initialPage)?initialPage:'overview',data:{},auth:null,csrf:'',form:null,filters:{period:period(),meterYear:Number(period().slice(0,4))},busy:false};
 async function api(path,method='GET',body){
  const args={method,credentials:'same-origin',headers:{'Accept':'application/json'}};
  if(method!=='GET')args.headers['X-CSRF-Token']=state.csrf;
@@ -55,7 +58,7 @@ const cmdAbility={'prepay-new':'prepayments.record','prepay-refund':'prepayments
 function btn(label,cmd,id='',style=''){if(cmdAbility[cmd]&&!can(cmdAbility[cmd]))return '';return `<button type="button" class="button ${style}" data-cmd="${esc(cmd)}" data-id="${esc(id)}">${esc(label)}</button>`;}
 function badge(text,kind=''){return `<span class="pill ${kind}">${esc(text)}</span>`;}
 function table(headers,records){return `<div class="panel"><div class="table-scroll"><table class="data"><thead><tr>${headers.map(h=>`<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${records.length?records.join(''):`<tr><td colspan="${headers.length}"><div class="empty">Chưa có dữ liệu. Bạn có thể tạo bản ghi mới ở phía trên.</div></td></tr>`}</tbody></table></div></div>`;}
-function header(title,desc,action=''){return `<div class="pagehead"><div><div class="eyebrow">TRỌFLOW PRO · VERSION 3.0</div><h1>${esc(title)}</h1><p>${esc(desc)}</p></div><div class="btnrow">${action}</div></div>`;}
+function header(title,desc,action=''){return `<div class="pagehead"><div><div class="eyebrow">TRỌFLOW WORKSPACE · VERSION 4.0</div><h1>${esc(title)}</h1><p>${esc(desc)}</p></div><div class="btnrow">${action}</div></div>`;}
 function panel(title,description,content){return `<section class="panel"><div class="panelhead"><div><strong>${esc(title)}</strong><p>${esc(description)}</p></div></div><div class="panelbody">${content}</div></section>`;}
 function pageOverview(){let s=state.data.summary||{},d=state.data;
  const kpis=[['Số cơ sở',s.properties?.length||0,'▣'],['Hóa đơn nháp',s.drafts||0,'▤'],['Phòng thiếu chỉ số',s.missing_readings?.length||0,'ϟ'],['Hợp đồng cần đối chiếu cọc',s.unsettled_deposits||0,'◈']];
@@ -131,7 +134,7 @@ function pageBank(){const p=state.data.properties||[];
  table(['CƠ SỞ','NGÂN HÀNG','SỐ TÀI KHOẢN','CHỦ TÀI KHOẢN',''],p.map(x=>`<tr><td><strong>${esc(x.name)}</strong></td><td>${esc(x.bank_code||'Chưa có')}</td><td>${esc(x.bank_account||'—')}</td><td>${esc(x.bank_name||'—')}</td><td>${btn('Cấu hình','bank-edit',x.id)}</td></tr>`));
 }
 const VIEWS={overview:pageOverview,deposits:pageDeposits,prepayments:pagePrepayments,residents:pageResidents,services:pageServices,meters:pageMeters,invoices:pageInvoices,handovers:pageHandovers,imports:pageImports,access:pageAccess,automation:pageAutomation,backups:pageBackups,bank:pageBank};
-function layout(){const user=state.auth?.user||{};$('#root').innerHTML=`<div class="shell"><aside class="side"><a class="brand" href="/"><span class="brand-icon">⌂</span>TrọFlow<span style="color:#00d3a5">.</span></a><div class="side-sub">PRO WORKSPACE · V3.0</div>
+function layout(){const user=state.auth?.user||{};$('#root').innerHTML=`<div class="shell"><aside class="side"><a class="brand" href="/"><span class="brand-icon">⌂</span>TrọFlow<span style="color:#00d3a5">.</span></a><div class="side-sub">TRỌFLOW · V4.0</div>
  <div class="side-label">NGHIỆP VỤ</div>${PAGES.slice(0,9).filter(([key])=>can(pageAbility[key])).map(([key,label,icon])=>`<button class="nav ${state.page===key?'active':''}" data-page="${key}"><span class="ni">${icon}</span><span>${label}</span></button>`).join('')}
  <div class="side-label">HỆ THỐNG</div>${PAGES.slice(9).filter(([key])=>can(pageAbility[key])).map(([key,label,icon])=>`<button class="nav ${state.page===key?'active':''}" data-page="${key}"><span class="ni">${icon}</span><span>${label}</span></button>`).join('')}
  <div class="side-bottom"><a href="/">← Trở về TrọFlow cơ bản</a><div class="user-meta">${esc(user.full_name)} · ${esc(user.role)}</div></div></aside>

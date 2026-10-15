@@ -1,3 +1,9 @@
+# TrọFlow 4.0 — bản mới nhất
+
+**Đọc [README-V4.md](README-V4.md) trước khi cập nhật**. Gồm tính năng, migration, quyền, ảnh, Stack, GHCR và QA staging.
+
+---
+
 # TrọFlow — Web quản lý nhà trọ chạy bằng Docker
 
 > **TrọFlow 3.0** (phân quyền 79 thao tác, chỉ số điện nước theo năm, tiền thuê trả trước nhiều tháng): xem [README-V3.md](README-V3.md). Portainer dùng `PORT=8088` hoặc cổng host tùy chọn; dữ liệu vẫn trong `/opt/troflow/`.

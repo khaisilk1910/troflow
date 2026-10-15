@@ -55,8 +55,8 @@ async def security_headers(request: Request, call_next):
     response = await call_next(request)
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
-    response.headers['X-Frame-Options'] = 'DENY'
-    response.headers['Content-Security-Policy'] = "default-src 'self'; img-src 'self' data: https://img.vietqr.io; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    response.headers['X-Frame-Options'] = 'SAMEORIGIN' if request.url.path=='/advanced' else 'DENY'
+    response.headers['Content-Security-Policy'] = "default-src 'self'; img-src 'self' data: https://img.vietqr.io; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'self'; base-uri 'self'; form-action 'self'"
     if request.url.path.startswith('/api/'):
         response.headers['Cache-Control'] = 'no-store'
     return response
@@ -194,6 +194,13 @@ def legacy_scope_check(con,request,user,body):
         property_id=body.get('property_id',property_id)
     elif entity in ('readings','tickets'):
         rid=body.get('room_id')
+        if entity=='readings' and len(parts)>2 and parts[2].isdigit():
+            original=one(con,'SELECT room_id FROM readings WHERE id=?',(int(parts[2]),))
+            if not original:fail('Không tìm thấy chỉ số.',404)
+            source=one(con,'SELECT property_id FROM rooms WHERE id=?',(original['room_id'],))
+            if not source or source['property_id'] not in grants:
+                fail('Chỉ số không thuộc cơ sở được phân quyền.',403)
+            rid=rid or original['room_id']
         if not rid and len(parts)>2 and parts[2].isdigit() and entity=='tickets':
             found=one(con,'SELECT room_id FROM tickets WHERE id=?',(int(parts[2]),))
             rid=found['room_id'] if found else None
@@ -611,6 +618,21 @@ def end_contract(ident:int,user=Depends(authorized)):
         audit(con,user,'end','contract',ident)
     return json_ok()
 
+@app.delete('/api/contracts/{ident}')
+def delete_contract(ident:int,user=Depends(authorized)):
+    with tx() as con:
+        contract=one(con,'SELECT id,room_id FROM contracts WHERE id=?',(ident,))
+        if not contract:fail('Không tìm thấy hợp đồng.',404)
+        # Finance must retain an immutable ledger and referential integrity.
+        for table in ('invoices','deposit_transactions','rent_prepayment_batches','rent_coverage','handovers'):
+            if one(con,f'SELECT 1 FROM {table} WHERE contract_id=? LIMIT 1',(ident,)):
+                fail('Hợp đồng đã phát sinh hóa đơn/tiền cọc/trả trước/bàn giao. Không thể xóa lịch sử; hãy kết thúc hợp đồng.',409)
+        con.execute('DELETE FROM contract_services WHERE contract_id=?',(ident,))
+        con.execute('DELETE FROM contract_residents WHERE contract_id=?',(ident,))
+        con.execute('DELETE FROM contracts WHERE id=?',(ident,))
+        audit(con,user,'delete','contract',ident)
+    return json_ok()
+
 def occupied_contract(con, room_id, period):
     """Require a real tenant with a contract overlapping the requested billing month."""
     period=period_str(period)
@@ -649,15 +671,57 @@ def save_reading(data:dict,user=Depends(authorized)):
             fail('Phòng chưa có người thuê / hợp đồng trong kỳ đã chọn; không thể ghi chỉ số.')
         record=one(con,'SELECT id FROM readings WHERE room_id=? AND period=?',(room_id,period))
         if record:
-            if one(con,'SELECT id FROM invoices WHERE room_id=? AND period=?',(room_id,period)):
-                fail('Đã phát hành hóa đơn cho kỳ này. Không thể sửa chỉ số.')
-            update(con,'readings',record['id'],dict(electric_old=eo,electric_new=en,water_old=wo,water_new=wn))
-            ident=record['id']; action='update'
-        else:
-            ident=insert(con,'readings',dict(room_id=room_id,period=period,electric_old=eo,
-                                             electric_new=en,water_old=wo,water_new=wn)); action='create'
+            fail('Đã có chỉ số của phòng trong tháng/năm này. Hãy chọn Sửa thay vì tạo mới.',409)
+        ident=insert(con,'readings',dict(room_id=room_id,period=period,electric_old=eo,
+                                         electric_new=en,water_old=wo,water_new=wn)); action='create'
         audit(con,user,action,'reading',ident)
     return json_ok(id=ident)
+
+def _reading_values(data):
+    room_id=positive(data.get('room_id'),'Phòng',1)
+    period=period_str(data.get('period'))
+    eo=decimal(data.get('electric_old',0),'Điện cũ')
+    en=decimal(data.get('electric_new',0),'Điện mới')
+    wo=decimal(data.get('water_old',0),'Nước cũ')
+    wn=decimal(data.get('water_new',0),'Nước mới')
+    if en<eo or wn<wo:fail('Chỉ số mới không được nhỏ hơn chỉ số cũ.')
+    return dict(room_id=room_id,period=period,electric_old=eo,electric_new=en,water_old=wo,water_new=wn)
+
+@app.put('/api/readings/{ident}')
+def update_reading(ident:int,data:dict,user=Depends(authorized)):
+    values=_reading_values(data)
+    with tx() as con:
+        existing=one(con,'SELECT * FROM readings WHERE id=?',(ident,))
+        if not existing:fail('Không tìm thấy chỉ số cần sửa.',404)
+        exists(con,'rooms',values['room_id'])
+        if not occupied_contract(con,values['room_id'],values['period']):
+            fail('Phòng chưa có hợp đồng thuê trong kỳ mới.')
+        overlap=one(con,'SELECT id FROM readings WHERE room_id=? AND period=? AND id<>?',
+                    (values['room_id'],values['period'],ident))
+        if overlap:fail('Phòng này đã có chỉ số tháng/năm được chọn. Vui lòng kiểm tra dữ liệu trùng.',409)
+        linked=one(con,'SELECT id FROM invoices WHERE room_id=? AND period=? LIMIT 1',
+                   (existing['room_id'],existing['period']))
+        if linked:fail('Kỳ cũ đã có hóa đơn. Cần xử lý hóa đơn trước khi đổi chỉ số.',409)
+        # Protect immutable published billing periods, even when moving readings into them.
+        linked=one(con,'SELECT id FROM invoices WHERE room_id=? AND period=? LIMIT 1',
+                   (values['room_id'],values['period']))
+        if linked:fail('Kỳ mới đã có hóa đơn. Không thể di chuyển chỉ số đến kỳ này.',409)
+        before=json.dumps({k:existing[k] for k in values},ensure_ascii=False)
+        update(con,'readings',ident,values)
+        audit(con,user,'update','reading',ident,before[:290])
+    return json_ok(id=ident)
+
+@app.delete('/api/readings/{ident}')
+def delete_reading(ident:int,user=Depends(authorized)):
+    with tx() as con:
+        current=one(con,'SELECT * FROM readings WHERE id=?',(ident,))
+        if not current:fail('Không tìm thấy chỉ số.',404)
+        if one(con,'SELECT id FROM invoices WHERE room_id=? AND period=? LIMIT 1',
+               (current['room_id'],current['period'])):
+            fail('Chỉ số đã dùng lập hóa đơn. Hãy xử lý hóa đơn trước khi xóa.',409)
+        con.execute('DELETE FROM readings WHERE id=?',(ident,))
+        audit(con,user,'delete','reading',ident,f"room={current['room_id']} period={current['period']}")
+    return json_ok()
 
 @app.get('/api/readings/previous')
 def prev_reading(room_id:int,period:str,user=Depends(authorized)):
@@ -751,6 +815,23 @@ def add_payment(data:dict,user=Depends(authorized)):
         if amount>inv['total']-inv['paid']: fail('Số tiền thu vượt quá số dư hóa đơn.')
         ident=insert(con,'payments',dict(invoice_id=invoice_id,amount=amount,paid_at=paid_at,method=method,note=note))
         audit(con,user,'create','payment',ident)
+    return json_ok(id=ident)
+
+@app.put('/api/payments/{ident}')
+def edit_payment(ident:int,data:dict,user=Depends(authorized)):
+    amount=positive(data.get('amount'),'Số tiền',1)
+    paid_at=date_str(data.get('paid_at'),'Ngày thu')
+    method=enum(data.get('method','transfer'),'Phương thức',['transfer','cash','other'])
+    note=trim(data.get('note'),'ghi chú',1000)
+    with tx() as con:
+        old=one(con,'SELECT * FROM payments WHERE id=?',(ident,))
+        if not old:fail('Không tìm thấy khoản thu.',404)
+        inv=one(con,'SELECT total FROM invoices WHERE id=?',(old['invoice_id'],))
+        others=one(con,'SELECT COALESCE(SUM(amount),0) n FROM payments WHERE invoice_id=? AND id<>?',
+                   (old['invoice_id'],ident))['n']
+        if amount+others>inv['total']:fail('Số tiền chỉnh sửa vượt giá trị hóa đơn.',409)
+        update(con,'payments',ident,dict(amount=amount,paid_at=paid_at,method=method,note=note))
+        audit(con,user,'update','payment',ident,f"old_amount={old['amount']}; new_amount={amount}")
     return json_ok(id=ident)
 
 @app.delete('/api/payments/{ident}')

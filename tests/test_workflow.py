@@ -61,7 +61,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(i['total'],3267500)
         self.assertEqual(i['balance'],3267500)
         self.assertEqual(self.post('invoices/generate',{'period':self.period})['created'],0)
-        self.post('readings',{'room_id':r,'period':self.period,'electric_old':100,'electric_new':130,'water_old':8,'water_new':12},400)
+        self.post('readings',{'room_id':r,'period':self.period,'electric_old':100,'electric_new':130,'water_old':8,'water_new':12},409)
         self.post('payments',{'invoice_id':i['id'],'amount':1000000,'paid_at':today,'method':'transfer'})
         self.assertEqual(self.get('invoices')[0]['balance'],2267500)
         self.post('payments',{'invoice_id':i['id'],'amount':2267501,'paid_at':today,'method':'cash'},400)

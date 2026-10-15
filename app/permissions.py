@@ -6,10 +6,10 @@ from .db import rows
 GROUPS = [
  ('dashboard','Tổng quan',['view']),('properties','Cơ sở',['view','create','edit','delete']),
  ('rooms','Phòng trọ',['view','create','edit','delete']),('tenants','Người thuê',['view','create','edit','delete']),
- ('contracts','Hợp đồng',['view','create','edit','end','proration']),
- ('readings','Điện nước',['view','record','batch','photos']),
+ ('contracts','Hợp đồng',['view','create','edit','delete','end','proration']),
+ ('readings','Điện nước',['view','record','edit','delete','batch','photos']),
  ('invoices','Hóa đơn',['view','preview','create','edit','publish','delete','pdf','vietqr']),
- ('payments','Thu tiền hóa đơn',['view','record','delete']),
+ ('payments','Thu tiền hóa đơn',['view','record','edit','delete']),
  ('prepayments','Tiền thuê trả trước',['view','record','refund']),
  ('deposits','Tiền cọc',['view','record']),('residents','Người ở cùng',['view','create','leave']),
  ('services','Phí dịch vụ',['view','create','edit','assign','remove']),
@@ -57,7 +57,7 @@ def defaults(job):
     for key in ADMIN_RESERVED:permitted[key]=False
     # Restrict destructive operations by default; admin must grant explicitly.
     for key in list(permitted):
-        if key.endswith('.delete') or key=='prepayments.refund':
+        if key.endswith('.delete') or key in ('prepayments.refund','payments.edit'):
             permitted[key]=False
     return permitted
 
@@ -93,7 +93,7 @@ def route_permission(path,method):
             if p[-1]=='publish':return 'invoices.publish'
             return 'invoices.create' if p[-1]=='draft' and method=='POST' else 'invoices.edit'
         if mod=='handovers':return 'handovers.pdf' if method=='GET' and p[-1]=='pdf' else ('handovers.view' if method=='GET' else 'handovers.create')
-        if mod=='files':return 'files.view' if method=='GET' else 'files.upload'
+        if mod=='files':return 'files.view' if method=='GET' else 'tenants.edit' if ('tenant' in p and method!='GET') else 'files.upload'
         if mod=='imports':return 'imports.view' if method=='GET' else 'imports.execute'
         if mod=='access':return 'access.view' if method=='GET' else 'access.edit'
         if mod=='backups':
@@ -111,7 +111,7 @@ def route_permission(path,method):
         if method=='GET':return f'{mod}.view'
         if mod=='contracts' and p[-1]=='end':return 'contracts.end'
         if mod=='invoices' and p[-1]=='generate':return 'invoices.publish'
-        if mod=='readings':return 'readings.record'
-        if mod=='payments':return 'payments.delete' if method=='DELETE' else 'payments.record'
+        if mod=='readings':return 'readings.delete' if method=='DELETE' else 'readings.edit' if method in ('PUT','PATCH') else 'readings.record'
+        if mod=='payments':return 'payments.delete' if method=='DELETE' else 'payments.edit' if method in ('PUT','PATCH') else 'payments.record'
         return f'{mod}.'+('create' if method=='POST' else 'edit' if method in ('PUT','PATCH') else 'delete')
     return None

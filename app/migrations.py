@@ -88,7 +88,7 @@ def _backup_before_upgrade(con, db_path):
     backup_dir = Path(os.getenv('BACKUP_DIRECTORY','/app/backups')) / 'migrations'
     backup_dir.mkdir(parents=True,exist_ok=True)
     stamp = datetime.now().strftime('%Y%m%d-%H%M%S-%f')
-    destination = backup_dir / f'troflow-before-v3-{stamp}.sqlite3'
+    destination = backup_dir / f'troflow-before-v4-{stamp}.sqlite3'
     with closing(sqlite3.connect(str(destination))) as dest:
         con.backup(dest)
         if dest.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
@@ -99,7 +99,7 @@ def _backup_before_upgrade(con, db_path):
 
 def migrate(con, db_path, existed_before_init=True):
     version=con.execute('PRAGMA user_version').fetchone()[0]
-    if version >= 3:
+    if version >= 4:
         return
     # v1 deployments historically had user_version=0; detect existence of legacy tables.
     if existed_before_init:
@@ -138,7 +138,10 @@ def migrate(con, db_path, existed_before_init=True):
           CHECK (length(period)=7))''')
         con.execute('CREATE INDEX IF NOT EXISTS idx_rent_coverage_contract ON rent_coverage(contract_id,period)')
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_rent_active_month ON rent_coverage(contract_id,period) WHERE status='active'")
-        con.execute('PRAGMA user_version=3')
+        columns={r[1] for r in con.execute('PRAGMA table_info(tenants)')}
+        if 'photo_path' not in columns:
+            con.execute('ALTER TABLE tenants ADD COLUMN photo_path TEXT')
+        con.execute('PRAGMA user_version=4')
         con.commit()
     except Exception:
         con.rollback()

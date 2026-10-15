@@ -146,7 +146,7 @@ class Version3Tests(unittest.TestCase):
             con.execute('INSERT INTO audit_logs(action,entity) VALUES(?,?)',('before','migration'))
         db.init_db()
         with db.connect() as con:
-            self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],3)
+            self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],4)
             self.assertEqual(con.execute("SELECT COUNT(*) FROM audit_logs WHERE action='before'").fetchone()[0],1)
             self.assertEqual(con.execute('PRAGMA integrity_check').fetchone()[0],'ok')
         self.assertEqual(len(list((Path(self.temp.name)/'backups'/'migrations').glob('*.sqlite3'))),1)

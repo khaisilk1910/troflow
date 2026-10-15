@@ -486,7 +486,7 @@ def handover(data:dict,user=Depends(authorized)):
 # 05 + 08 PHOTOS. Private with authenticated fetch; validate basic file signatures.
 @router.post('/files')
 async def upload_file(category:str=Form(...),related_id:int=Form(...),file:UploadFile=File(...),user=Depends(authorized)):
-    category=enum(category,'Loại tệp',['electric','water','checkin','checkout'])
+    category=enum(category,'Loại tệp',['electric','water','checkin','checkout','tenant'])
     if user['role']!='admin' and category in ('electric','water') and not user['permissions'].get('readings.photos'):
         fail('Chưa được cấp quyền tải ảnh công tơ.',403)
     contents=await file.read(3*1024*1024+1)
@@ -496,7 +496,17 @@ async def upload_file(category:str=Form(...),related_id:int=Form(...),file:Uploa
     elif contents[:4]==b'RIFF' and contents[8:12]==b'WEBP':ext='webp'
     else:fail('Chỉ chấp nhận JPG, PNG hoặc WebP.')
     with tx() as con:
-        if category in ('electric','water'):
+        if category=='tenant':
+            if user['role']!='admin' and not user['permissions'].get('tenants.edit'):
+                fail('Chưa được cấp quyền cập nhật người thuê.',403)
+            entity=one(con,'SELECT id FROM tenants WHERE id=?',(related_id,))
+            if not entity:fail('Không tìm thấy khách thuê.',404)
+            if user['role']!='admin' and user['grant_ids']:
+                permitted=one(con,'''SELECT 1 FROM contracts c JOIN rooms r ON r.id=c.room_id
+                     WHERE c.tenant_id=? AND r.property_id IN ('''+','.join('?' for _ in user['grant_ids'])+')',
+                     (related_id,*user['grant_ids']))
+                if not permitted:fail('Khách thuê không thuộc cơ sở được phép.',403)
+        elif category in ('electric','water'):
             entity=one(con,'SELECT room_id FROM readings WHERE id=?',(related_id,))
             if not entity:fail('Chỉ số không tồn tại.',404)
             right(user,room_property(con,entity['room_id']),'reading')
@@ -509,7 +519,9 @@ async def upload_file(category:str=Form(...),related_id:int=Form(...),file:Uploa
         dest=UPLOADS / name
         with open(dest,'xb') as f:f.write(contents)
         os.chmod(dest,0o600)
-        if category in ('electric','water'):
+        if category=='tenant':
+            con.execute('UPDATE tenants SET photo_path=? WHERE id=?',(name,related_id))
+        elif category in ('electric','water'):
             con.execute(f'UPDATE readings SET {category}_photo=? WHERE id=?',(name,related_id))
         else:
             con.execute('UPDATE handovers SET photo_path=? WHERE id=?',(name,related_id))
@@ -524,8 +536,19 @@ def fetch_file(name:str,user=Depends(authorized)):
             WHERE d.electric_photo=? OR d.water_photo=? LIMIT 1''',(name,name))
         if not r:r=one(con,'''SELECT r.property_id FROM handovers h JOIN contracts c ON c.id=h.contract_id
             JOIN rooms r ON r.id=c.room_id WHERE h.photo_path=?''',(name,))
+        if not r:
+            tenant=one(con,'SELECT id FROM tenants WHERE photo_path=?',(name,))
+            if tenant:
+                if user['role']!='admin' and not user['permissions'].get('tenants.view'):
+                    fail('Chưa được cấp quyền xem ảnh khách thuê.',403)
+                if user['role']!='admin' and user['grant_ids']:
+                    r=one(con,'''SELECT r.property_id FROM contracts c JOIN rooms r ON r.id=c.room_id
+                            WHERE c.tenant_id=? AND r.property_id IN ('''+','.join('?' for _ in user['grant_ids'])+') LIMIT 1',
+                            (tenant['id'],*user['grant_ids']))
+                    if not r:fail('Không có quyền xem ảnh khách thuê này.',403)
+                else:r={'property_id':None}
         if not r:fail('Không tìm thấy ảnh.',404)
-        right(user,r['property_id'],'view')
+        if r['property_id'] is not None:right(user,r['property_id'],'view')
     path=UPLOADS/name
     if not path.is_file():fail('Tệp không tồn tại.',404)
     return FileResponse(path,media_type=mimetypes.guess_type(name)[0] or 'image/jpeg',
