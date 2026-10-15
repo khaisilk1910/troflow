@@ -1,3 +1,7 @@
+# TrọFlow 5.7 — Yêu cầu sửa chữa và Zalo album
+
+Xem **README-V5.7.md** để triển khai và vận hành bản cập nhật, các ghi chú ở bản cũ vẫn có giá trị.
+
 # TrọFlow 5.4 — Hóa đơn chi tiết, PNG, Zalo
 
 Xem [README-V5.4.md](README-V5.4.md) để biết thay đổi, triển khai và kiểm thử.
@@ -161,3 +165,11 @@ Tích hợp Zalo Bot Server cùng máy Ubuntu, quản lý nhiều tài khoản n
 ## Cập nhật 5.3 — Danh mục ngân hàng VietQR
 
 Xem [README-V5.3.md](README-V5.3.md) về chọn ngân hàng có tìm kiếm, tự điền BIN và làm mới danh mục từ VietQR.
+
+## Triển khai public Internet / Security 5.5
+
+Xem [SECURITY-DEPLOY.md](SECURITY-DEPLOY.md). **Không mở trực tiếp cổng 8088** hoặc Zalo port 3000 ra Internet. Dùng `deploy/portainer-stack-public.yml` sau khi tạo khóa bí mật và có HTTPS reverse proxy.
+
+## Bản 5.6 — Cổng khách thuê & thông tin chủ nhà
+
+Xem [README-V5.6.md](README-V5.6.md) để biết cách cấp tài khoản khách thuê, gửi và duyệt chỉ số điện nước có ảnh, cấu hình thông tin chủ nhà được công khai, migration V7 và vận hành an toàn trên Internet.

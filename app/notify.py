@@ -32,11 +32,24 @@ def _admin(user):
 
 def _setting(con):
     item=one(con,'SELECT * FROM zalo_config WHERE id=1')
-    return item or {'enabled':0,'invoice_enabled':0,'payment_enabled':0,'bot_url':'http://host.docker.internal:3000','account_selection':'','media_url':''}
+    return item or {'enabled':0,'invoice_enabled':0,'payment_enabled':0,'ticket_enabled':0,'bot_url':'http://host.docker.internal:3000','account_selection':'','media_url':''}
 
 
 def _secret_file():
     return dbmodule.DB_PATH.parent/'zalo-integration-credentials.json'
+
+
+def _credential_cipher():
+    from cryptography.fernet import Fernet
+    filename=os.getenv('TROFLOW_SECRET_KEY_FILE','/run/secrets/troflow_integration_key')
+    path=Path(filename)
+    try:
+        return Fernet(path.read_bytes().strip())
+    except (OSError,ValueError) as exc:
+        from .main import PUBLIC_MODE
+        if PUBLIC_MODE:
+            raise RuntimeError('Chế độ Internet cần khóa bí mật hợp lệ tại TROFLOW_SECRET_KEY_FILE.') from exc
+        return None
 
 
 def _credentials():
@@ -47,6 +60,19 @@ def _credentials():
     if path.is_file():
         try:
             data=json.loads(path.read_text(encoding='utf-8'))
+            cipher=_credential_cipher()
+            if 'encrypted' in data:
+                if cipher is None:
+                    raise RuntimeError('Cần cung cấp khóa mã hóa để đọc mật khẩu bot.')
+                from cryptography.fernet import InvalidToken
+                try:
+                    password=cipher.decrypt(data['encrypted'].encode()).decode('utf-8')
+                except (InvalidToken,ValueError) as exc:
+                    raise RuntimeError('Không thể giải mã thông tin Zalo Bot; kiểm tra khóa bí mật.') from exc
+                return data.get('username',''),password
+            # Migrate plaintext credentials from V5.4 without losing their contents.
+            if cipher:
+                _save_credentials(data.get('username',''),data.get('password',''))
             return data.get('username',''),data.get('password','')
         except (OSError,ValueError):pass
     return '', ''
@@ -54,13 +80,19 @@ def _credentials():
 
 def _save_credentials(username,password):
     path=_secret_file()
+    cipher=_credential_cipher()
+    if cipher:
+        payload={'username':username,'encrypted':cipher.encrypt(password.encode('utf-8')).decode('ascii')}
+    else:
+        payload={'username':username,'password':password}
     path.parent.mkdir(parents=True,exist_ok=True)
     tmp=path.with_name('.zalo-creds-'+secrets.token_hex(8))
     try:
         fd=os.open(tmp,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
         with os.fdopen(fd,'w',encoding='utf-8') as out:
-            json.dump({'username':username,'password':password},out)
+            json.dump(payload,out)
         os.replace(tmp,path)
+        os.chmod(path,0o600)
     finally:
         if tmp.exists():tmp.unlink()
 
@@ -231,12 +263,13 @@ def update_zalo_settings(data:dict,user=Depends(admin_user)):
     elif username and username != old_user:
         fail('Khi đổi tên đăng nhập, cần nhập mật khẩu mới.')
     with tx() as con:
-        con.execute('''INSERT INTO zalo_config(id,enabled,invoice_enabled,payment_enabled,bot_url,account_selection,media_url)
-         VALUES(1,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET enabled=excluded.enabled,
+        con.execute('''INSERT INTO zalo_config(id,enabled,invoice_enabled,payment_enabled,ticket_enabled,bot_url,account_selection,media_url)
+         VALUES(1,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET enabled=excluded.enabled,
          invoice_enabled=excluded.invoice_enabled,payment_enabled=excluded.payment_enabled,
-         bot_url=excluded.bot_url,account_selection=excluded.account_selection,media_url=excluded.media_url''',
+         ticket_enabled=excluded.ticket_enabled,bot_url=excluded.bot_url,
+         account_selection=excluded.account_selection,media_url=excluded.media_url''',
          (int(bool(data.get('enabled'))),int(bool(data.get('invoice_enabled'))),
-          int(bool(data.get('payment_enabled'))),bot_url,selection,media_url))
+          int(bool(data.get('payment_enabled'))),int(bool(data.get('ticket_enabled'))),bot_url,selection,media_url))
         audit(con,user,'update','zalo_config',1)
     return {'ok':True}
 
@@ -257,8 +290,11 @@ def _destination_values(con,data):
             'tenant_id':positive(data['tenant_id'],'Khách thuê',1) if data.get('tenant_id') else None,
             'enabled':int(bool(data.get('enabled',1))),
             'on_invoice':int(bool(data.get('on_invoice',1))),
-            'on_payment':int(bool(data.get('on_payment',1)))}
+            'on_payment':int(bool(data.get('on_payment',1))),
+            'on_ticket':int(bool(data.get('on_ticket',0)))}
     if values['kind'] not in ('user','group'):fail('Loại nơi nhận phải là user hoặc group.')
+    if values['on_ticket'] and values['tenant_id']:
+        fail('Nơi nhận thông báo sửa chữa của chủ nhà không được gắn với khách thuê.',400)
     if not re.fullmatch(r'[0-9]{5,24}',values['thread_id']):fail('ID Zalo phải là chuỗi số từ 5–24 ký tự.')
     if values['tenant_id'] and not one(con,'SELECT id FROM tenants WHERE id=?',(values['tenant_id'],)):
         fail('Khách thuê không tồn tại.',404)
@@ -271,8 +307,8 @@ def _destination_values(con,data):
 def create_destination(data:dict,user=Depends(admin_user)):
     with tx() as con:
         values=_destination_values(con,data)
-        cur=con.execute('''INSERT INTO zalo_destinations(name,thread_id,kind,property_id,tenant_id,enabled,on_invoice,on_payment)
-          VALUES(:name,:thread_id,:kind,:property_id,:tenant_id,:enabled,:on_invoice,:on_payment)''',values)
+        cur=con.execute('''INSERT INTO zalo_destinations(name,thread_id,kind,property_id,tenant_id,enabled,on_invoice,on_payment,on_ticket)
+          VALUES(:name,:thread_id,:kind,:property_id,:tenant_id,:enabled,:on_invoice,:on_payment,:on_ticket)''',values)
         audit(con,user,'create','zalo_destination',cur.lastrowid)
         return {'id':cur.lastrowid}
 
@@ -283,7 +319,7 @@ def edit_destination(ident:int,data:dict,user=Depends(admin_user)):
         values=_destination_values(con,data)
         cur=con.execute('''UPDATE zalo_destinations SET name=:name,thread_id=:thread_id,kind=:kind,
           property_id=:property_id,tenant_id=:tenant_id,enabled=:enabled,on_invoice=:on_invoice,
-          on_payment=:on_payment WHERE id=:id''',{**values,'id':ident})
+          on_payment=:on_payment,on_ticket=:on_ticket WHERE id=:id''',{**values,'id':ident})
         if not cur.rowcount:fail('Không có nơi nhận.',404)
         audit(con,user,'update','zalo_destination',ident)
     return {'ok':True}
@@ -328,6 +364,42 @@ def enqueue_invoice_event(con,invoice_id,event):
           VALUES(?,?,?,?,?,'pending')''',(dest['id'],invoice_id,event,key,msg))
 
 
+def enqueue_ticket_event(con, ticket_id):
+    """Enqueue after a tenant creates the ticket, inside the same transaction.
+
+    Owner-only destinations require tenant_id NULL, so a contact for another
+    renter can never receive this tenant's repair details.
+    """
+    config=_setting(con)
+    if not config.get('enabled') or not config.get('ticket_enabled'):
+        return 0
+    t=one(con,'''SELECT k.*,r.code room_code,r.property_id,p.name property_name,
+             t.full_name tenant_name,t.phone tenant_phone
+             FROM tickets k JOIN rooms r ON r.id=k.room_id
+             JOIN properties p ON p.id=r.property_id
+             JOIN tenants t ON t.id=k.reported_by_tenant_id WHERE k.id=?''',(ticket_id,))
+    if not t:return 0
+    category={'electric':'Điện','water':'Nước','internet':'Internet','furniture':'Nội thất','other':'Khác'}
+    priority={'low':'Thấp','medium':'Trung bình','high':'Cao'}
+    status={'new':'Mới tiếp nhận','in_progress':'Đang xử lý','done':'Đã hoàn thành'}
+    photos=one(con,'SELECT COUNT(*) n FROM ticket_photos WHERE ticket_id=?',(ticket_id,))['n']
+    message=(f'YÊU CẦU SỬA CHỮA MỚI #{ticket_id}\n'
+       f'Cơ sở: {t["property_name"]}\nPhòng: {t["room_code"]}\n'
+       f'Khách thuê: {t["tenant_name"]}\nSĐT: {t["tenant_phone"]}\n'
+       f'Loại sự cố: {category.get(t["category"],t["category"])}\n'
+       f'Tiêu đề: {t["title"]}\nMức ưu tiên: {priority.get(t["priority"],t["priority"])}\n'
+       f'Tiến độ: {status.get(t["status"],t["status"])}\nNgày báo: {t["reported_at"]}\n'
+       f'Nội dung: {t["description"] or "Không có"}\nSố ảnh: {photos}')
+    destinations=rows(con,'''SELECT * FROM zalo_destinations WHERE enabled=1 AND on_ticket=1
+       AND tenant_id IS NULL AND (property_id IS NULL OR property_id=?)''',(t['property_id'],))
+    for d in destinations:
+        con.execute('''INSERT OR IGNORE INTO zalo_outbox
+          (destination_id,ticket_id,event,event_key,message,status)
+          VALUES(?,?,'ticket',?,?,'pending')''',
+          (d['id'],ticket_id,f'ticket:{ticket_id}',message[:1800]))
+    return len(destinations)
+
+
 def _http_json(opener,url,payload):
     req=urllib.request.Request(url,data=json.dumps(payload,ensure_ascii=False).encode('utf-8'),
       headers={'Content-Type':'application/json','Accept':'application/json'},method='POST')
@@ -336,7 +408,7 @@ def _http_json(opener,url,payload):
         return json.loads(resp.read(512000).decode('utf-8'))
 
 
-def _bot_send(config,dest,msg,image_url=None):
+def _bot_send(config,dest,msg,image_url=None,image_urls=None):
     username,password=_credentials()
     if not username or not password:raise RuntimeError('Chưa cấu hình tên đăng nhập/mật khẩu bot.')
     cookies=http.cookiejar.CookieJar()
@@ -345,10 +417,18 @@ def _bot_send(config,dest,msg,image_url=None):
     if not logged.get('success'):raise RuntimeError('Đăng nhập Zalo Bot thất bại.')
     params={'accountSelection':str(config['account_selection']),'threadId':str(dest['thread_id']),
             'type':1 if dest['kind']=='group' else 0,'message':msg}
-    if image_url:params['imagePath']=image_url
-    endpoint='/api/sendImageByAccount' if image_url else '/api/sendMessageByAccount'
+    if image_urls and len(image_urls)>=2:
+        if len(image_urls)>5:raise RuntimeError('Album tối đa 5 ảnh.')
+        params['imagePaths']=image_urls
+        endpoint='/api/sendImagesByAccount'  # Native zca-js album, ONE message.
+    else:
+        if image_urls and len(image_urls)==1:image_url=image_urls[0]
+        if image_url:params['imagePath']=image_url
+        endpoint='/api/sendImageByAccount' if image_url else '/api/sendMessageByAccount'
     outcome=_http_json(opener,config['bot_url']+endpoint,params)
     if not outcome.get('success'):raise RuntimeError(str(outcome.get('error') or 'Bot không xác nhận gửi thành công.')[:200])
+    if image_urls and len(image_urls)>=2 and outcome.get('deliveryStatus') != 'accepted':
+        raise RuntimeError('Bot chỉ xác nhận một phần album. Kiểm tra Zalo trước khi thử gửi lại.')
     return outcome
 
 
@@ -558,7 +638,26 @@ def process_outbox(limit=6):
                     con.execute('INSERT INTO notification_media(token,invoice_id,expires_at) VALUES(?,?,?)',(token,record['invoice_id'],expire))
                 if not config['media_url']:raise RuntimeError('Chưa cấu hình địa chỉ TroFlow để Zalo tải ảnh.')
                 image_url=config['media_url']+'/api/integration-media/'+token
-            _bot_send(config,dest,record['message'],image_url)
+            album_urls=None
+            if record.get('event')=='ticket' and record.get('ticket_id'):
+                if not config.get('ticket_enabled') or not dest.get('on_ticket') or dest.get('tenant_id'):
+                    raise RuntimeError('Đã tắt thông báo sửa chữa hoặc nơi nhận không còn hợp lệ.')
+                with tx() as con:
+                    ticket=one(con,'SELECT r.property_id FROM tickets k JOIN rooms r ON r.id=k.room_id WHERE k.id=?',(record['ticket_id'],))
+                    if not ticket or (dest.get('property_id') is not None and ticket['property_id']!=dest['property_id']):
+                        raise RuntimeError('Yêu cầu đã bị xóa hoặc nơi nhận không đúng cơ sở.')
+                    photos=rows(con,'SELECT id FROM ticket_photos WHERE ticket_id=? ORDER BY id',(record['ticket_id'],))
+                    if photos:
+                        if not config.get('media_url'):raise RuntimeError('Chưa thiết lập URL nội bộ để bot tải ảnh.')
+                        album_urls=[]
+                        expiry=(datetime.now(timezone.utc)+timedelta(minutes=10)).isoformat()
+                        con.execute('DELETE FROM ticket_media_tokens WHERE expires_at<?',(datetime.now(timezone.utc).isoformat(),))
+                        for photo in photos:
+                            token=secrets.token_urlsafe(32)
+                            con.execute('INSERT INTO ticket_media_tokens(token,photo_id,expires_at) VALUES(?,?,?)',
+                                        (token,photo['id'],expiry))
+                            album_urls.append(config['media_url']+'/api/integration-ticket-media/'+token)
+            _bot_send(config,dest,record['message'],image_url,image_urls=album_urls)
         except Exception as exc:
             error=str(exc)[:220]
         with tx() as con:

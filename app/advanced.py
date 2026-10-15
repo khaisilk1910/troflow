@@ -1,5 +1,6 @@
 """TroFlow 2.0 add-on REST API; old URLs/database remain backwards compatible."""
 import csv
+import warnings
 import io
 import json
 import mimetypes
@@ -500,6 +501,8 @@ def handover(data:dict,user=Depends(authorized)):
 @router.post('/files')
 async def upload_file(category:str=Form(...),related_id:int=Form(...),file:UploadFile=File(...),user=Depends(authorized)):
     category=enum(category,'Loại tệp',['electric','water','checkin','checkout','tenant','tenant_id_front','tenant_id_back'])
+    if category in ('tenant_id_front','tenant_id_back') and user['role']!='admin' and not user['permissions'].get('tenants.idphotos',False):
+        fail('Chưa được cấp quyền xử lý ảnh CCCD.',403)
     if user['role']!='admin' and category in ('electric','water') and not user['permissions'].get('readings.photos'):
         fail('Chưa được cấp quyền tải ảnh công tơ.',403)
     contents=await file.read(3*1024*1024+1)
@@ -508,6 +511,25 @@ async def upload_file(category:str=Form(...),related_id:int=Form(...),file:Uploa
     elif contents.startswith(b'\xff\xd8\xff'):ext='jpg'
     elif contents[:4]==b'RIFF' and contents[8:12]==b'WEBP':ext='webp'
     else:fail('Chỉ chấp nhận JPG, PNG hoặc WebP.')
+    # Decode and re-encode rather than trusting a magic header or MIME field.
+    # This strips EXIF/GPS and malicious metadata and bounds decompression bombs.
+    try:
+        from PIL import Image, ImageOps, UnidentifiedImageError
+        with warnings.catch_warnings():
+            warnings.simplefilter('error',Image.DecompressionBombWarning)
+            with Image.open(io.BytesIO(contents)) as source:
+                if source.format not in ('PNG','JPEG','WEBP') or source.width*source.height>12_000_000:
+                    fail('Ảnh vượt giới hạn kích thước cho phép.')
+                source.load()
+                clean=ImageOps.exif_transpose(source)
+                clean=clean.convert('RGB') if ext=='jpg' else clean.convert('RGBA' if 'A' in clean.getbands() else 'RGB')
+                output=io.BytesIO()
+                clean.save(output,format={'jpg':'JPEG','png':'PNG','webp':'WEBP'}[ext],
+                           **({'quality':85} if ext in ('jpg','webp') else {}))
+                contents=output.getvalue()
+        if len(contents)>5*1024*1024:fail('Ảnh sau xử lý vượt giới hạn 5 MB.')
+    except (OSError,ValueError,Image.DecompressionBombError,Image.DecompressionBombWarning,UnidentifiedImageError):
+        fail('Ảnh không hợp lệ hoặc dữ liệu ảnh bị hỏng.')
     with tx() as con:
         if category in ('tenant','tenant_id_front','tenant_id_back'):
             if user['role']!='admin' and not user['permissions'].get('tenants.edit'):
@@ -553,6 +575,9 @@ def fetch_file(name:str,user=Depends(authorized)):
         if not r:
             tenant=one(con,'SELECT id FROM tenants WHERE photo_path=? OR id_front_path=? OR id_back_path=?',(name,name,name))
             if tenant:
+                is_identity=bool(one(con,'SELECT 1 ok FROM tenants WHERE id=? AND (id_front_path=? OR id_back_path=?)',(tenant['id'],name,name)))
+                if is_identity and user['role']!='admin' and not user['permissions'].get('tenants.idphotos',False):
+                    fail('Không có quyền xem ảnh giấy tờ tùy thân.',403)
                 if user['role']!='admin' and not user['permissions'].get('tenants.view'):
                     fail('Chưa được cấp quyền xem ảnh khách thuê.',403)
                 if user['role']!='admin' and user['grant_ids']:

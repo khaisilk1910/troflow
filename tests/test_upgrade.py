@@ -106,7 +106,10 @@ class UpgradeTests(unittest.TestCase):
         self.assertIn('full_name',self.req('GET','v2/imports/template/tenants').text)
         self.req('POST','readings',{'room_id':rid,'period':self.month,'electric_old':0,'electric_new':3,'water_old':0,'water_new':1})
         reading=self.req('GET','readings').json()[0]
-        content=b'\x89PNG\r\n\x1a\n'+b'\0'*100
+        from PIL import Image
+        image_buffer=io.BytesIO()
+        Image.new('RGB',(2,2),'red').save(image_buffer,format='PNG')
+        content=image_buffer.getvalue()
         self.req('POST','v2/files',data={'category':'electric','related_id':str(reading['id'])},files={'file':('meter.png',content,'image/png')})
         name=self.req('GET','readings').json()[0]['electric_photo']
         self.assertTrue(self.req('GET',f'v2/files/{name}').content.startswith(b'\x89PNG'))
@@ -163,7 +166,7 @@ class UpgradeTests(unittest.TestCase):
         db.DB_PATH=legacy
         db.init_db();db.init_db()
         with db.connect() as con:
-            self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],6)
+            self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],8)
             self.assertEqual(con.execute('SELECT COUNT(*) FROM contract_residents').fetchone()[0],1)
             self.assertEqual(con.execute('SELECT name FROM properties WHERE id=1').fetchone()[0],'Cơ sở cũ')
             self.assertEqual(con.execute('SELECT prorate FROM contracts WHERE id=1').fetchone()[0],0)

@@ -52,7 +52,7 @@ const iconPaths={
  info:'<circle cx="12" cy="12" r="10"/><path d="M12 11v6M12 7h.01"/>'};
 const ic=(name,size)=>`<svg class="icon" ${size?`style="width:${size}px;height:${size}px"`:''} viewBox="0 0 24 24" aria-hidden="true">${iconPaths[name]||iconPaths.info}</svg>`;
 
-const views={dashboard:'Tổng quan',properties:'Cơ sở',utilitymeters:'Công tơ điện nước',rooms:'Phòng trọ',tenants:'Người thuê',contracts:'Hợp đồng',readings:'Điện & nước',invoices:'Hóa đơn',payments:'Thanh toán',expenses:'Thu chi',tickets:'Sự cố',reports:'Báo cáo',settings:'Cài đặt',users:'Nhân sự',audit:'Nhật ký',deposits:'Tiền cọc',prepayments:'Thuê trả trước',residents:'Người ở',services:'Phí dịch vụ',handovers:'Bàn giao phòng',imports:'Nhập Excel',access:'Phân quyền',automation:'Lịch hóa đơn',backups:'Sao lưu',bank:'VietQR',bankaccounts:'Tài khoản ngân hàng & QR',zalo:'Thông báo Zalo',meterTools:'Điện nước nâng cao',invoiceTools:'Hóa đơn nâng cao'};
+const views={dashboard:'Tổng quan',properties:'Cơ sở',utilitymeters:'Công tơ điện nước',rooms:'Phòng trọ',tenants:'Người thuê',contracts:'Hợp đồng',readings:'Điện & nước',invoices:'Hóa đơn',payments:'Thanh toán',expenses:'Thu chi',tickets:'Sự cố',reports:'Báo cáo',settings:'Cài đặt',tenantApprovals:'Duyệt chỉ số khách thuê',users:'Nhân sự',audit:'Nhật ký',deposits:'Tiền cọc',prepayments:'Thuê trả trước',residents:'Người ở',services:'Phí dịch vụ',handovers:'Bàn giao phòng',imports:'Nhập Excel',access:'Phân quyền',automation:'Lịch hóa đơn',backups:'Sao lưu',bank:'VietQR',bankaccounts:'Tài khoản ngân hàng & QR',zalo:'Thông báo Zalo',meterTools:'Điện nước nâng cao',invoiceTools:'Hóa đơn nâng cao'};
 const integratedPages={deposits:'deposits',prepayments:'prepayments',residents:'residents',services:'services',handovers:'handovers',imports:'imports',access:'access',automation:'automation',backups:'backups',bank:'bank',meterTools:'meters',invoiceTools:'invoices'};
 const standalonePages={bankaccounts:'banks',zalo:'zalo'};
 const embeddedAbility={deposits:'deposits.view',prepayments:'prepayments.view',residents:'residents.view',services:'services.view',handovers:'handovers.view',imports:'imports.view',access:'access.view',automation:'schedules.view',backups:'backups.view',bank:'bank.view',meterTools:'readings.view',invoiceTools:'invoices.view'};
@@ -64,7 +64,7 @@ const state={user:null,csrf:'',view:'dashboard',data:{},search:'',propertyFilter
 const ENTITY_API={properties:'properties',rooms:'rooms',tenants:'tenants',contracts:'contracts',readings:'readings',invoices:'invoices',payments:'payments',expenses:'expenses',tickets:'tickets',users:'users'};
 let busy=false;
 const can=(key)=>state.user?.role==='admin'||Boolean(state.user?.permissions?.[key]);
-const canPage=(view)=>view in standalonePages?state.user?.role==='admin':view in integratedPages?can(embeddedAbility[view]):['settings','users','audit'].includes(view)?state.user?.role==='admin':can(view+'.view');
+const canPage=(view)=>view in standalonePages?state.user?.role==='admin':view in integratedPages?can(embeddedAbility[view]):view==='tenantApprovals'?can('readings.view'):['settings','users','audit'].includes(view)?state.user?.role==='admin':can(view+'.view');
 const firstPage=()=>Object.keys(views).find(canPage)||null;
 
 
@@ -76,7 +76,7 @@ async function api(path,method='GET',payload){
  return out;
 }
 function toast(message,error=false){const root=$('#toast-root');if(!root)return;const el=document.createElement('div');el.className='toast'+(error?' error':'');el.innerHTML=ic(error?'alert':'check')+`<span>${esc(message)}</span>`;root.append(el);setTimeout(()=>el.remove(),4800);}
-async function init(){try{const s=await api('auth/status');if(!s.initialized)return renderAuth(true);try{const a=await api('auth/me');state.user=a.user;state.csrf=a.csrf;state.view=canPage('dashboard')?'dashboard':firstPage()||'dashboard';renderShell();await refresh();}catch{renderAuth(false);}}catch(e){$('#app').innerHTML=`<div class="startup">${ic('alert',40)}<h2>Không kết nối được máy chủ</h2><p>${esc(e.message)}</p><button class="btn btn-primary" data-action="reload">Thử lại</button></div>`;}}
+async function init(){try{const s=await api('auth/status');if(!s.initialized){if(s.setup_via_cli){$('#app').innerHTML='<main class="auth-screen"><section class="auth-panel"><div class="auth-inner"><h2>TrọFlow đang chờ khởi tạo quản trị viên</h2><p>Vì máy chủ được cấu hình public Internet, tài khoản Admin đầu tiên phải được tạo trực tiếp trên Ubuntu Server bởi chủ nhà.</p><p>Chạy lệnh: <code>docker exec -it troflow python scripts/bootstrap_admin.py</code></p><button class="btn btn-primary" data-action="reload">Tải lại sau khi khởi tạo</button></div></section></main>';return;}return renderAuth(true);}try{const a=await api('auth/me');state.user=a.user;state.csrf=a.csrf;state.view=canPage('dashboard')?'dashboard':firstPage()||'dashboard';renderShell();await refresh();}catch{renderAuth(false);}}catch(e){$('#app').innerHTML=`<div class="startup">${ic('alert',40)}<h2>Không kết nối được máy chủ</h2><p>${esc(e.message)}</p><button class="btn btn-primary" data-action="reload">Thử lại</button></div>`;}}
 function renderAuth(first){
  state.user=null;state.csrf='';document.title=(first?'Thiết lập':'Đăng nhập')+' · TrọFlow';
  $('#app').innerHTML=`<main class="auth-screen"><section class="auth-panel"><div class="auth-inner">
@@ -90,7 +90,7 @@ function renderAuth(first){
  <div class="field"><label for="password">Mật khẩu</label><input required id="password" name="password" type="password" ${first?'minlength="10"':''} placeholder="${first?'Tối thiểu 10 ký tự':'Nhập mật khẩu của bạn'}" autocomplete="${first?'new-password':'current-password'}"></div>
  ${first?`<p class="meta-note" style="margin:0 0 20px">Dữ liệu chỉ được lưu trên máy chủ của bạn. Tài khoản này có toàn quyền quản trị.</p>`:''}
  <button type="submit" class="btn btn-primary btn-wide">${first?'Tạo tài khoản quản trị':'Đăng nhập hệ thống'} ${ic('chevron')}</button>
- </form><div class="auth-prompt">TRỌFLOW • PRIVATE & SELF-HOSTED</div></div></section>
+ </form>${!first?`<p class="meta-note" style="margin-top:16px">Bạn là khách thuê? <a href="/tenant">Đăng nhập cổng khách thuê</a></p>`:''}<div class="auth-prompt">TRỌFLOW • PRIVATE & SELF-HOSTED</div></div></section>
  <aside class="auth-art"><span class="auth-art-top">PROPERTY MANAGEMENT, SIMPLIFIED</span><div><h2>Quản lý tốt hơn.<br>Vận hành nhẹ hơn.</h2><p>Mọi căn phòng, hợp đồng, khoản thu và công việc bảo trì trong một không gian đơn giản, rõ ràng.</p></div><div class="auth-art-cards"><div class="auth-art-card"><strong>01</strong><span>Một nơi quản lý tất cả</span></div><div class="auth-art-card"><strong>24/7</strong><span>Truy cập trên mọi thiết bị</span></div><div class="auth-art-card"><strong>100%</strong><span>Dữ liệu bạn kiểm soát</span></div></div></aside></main>`;
  $('#auth-form').addEventListener('submit',async e=>{e.preventDefault();if(busy)return;busy=true;const button=$('button[type=submit]',e.currentTarget);button.disabled=true;const fd=Object.fromEntries(new FormData(e.currentTarget));try{const result=await api(first?'auth/setup':'auth/login','POST',fd);state.user=result.user;state.csrf=result.csrf;state.view=canPage('dashboard')?'dashboard':firstPage()||'dashboard';renderShell();await refresh();toast('Chào mừng đến với TrọFlow!');}catch(err){toast(err.message,true);button.disabled=false;}finally{busy=false;}});
 }
@@ -107,7 +107,7 @@ function renderShell(){
   <div class="nav-label">QUẢN LÝ CHO THUÊ</div>${navItem('properties','Cơ sở / Tòa nhà','building')}${navItem('rooms','Danh sách phòng','door')}${navItem('tenants','Khách thuê','users')}${navItem('contracts','Hợp đồng','contract')}
   <div class="nav-label">TÀI CHÍNH</div>${navItem('utilitymeters','Công tơ điện nước tổng','meter')}${navItem('readings','Chỉ số điện nước','meter')}${navItem('invoices','Hóa đơn tiền trọ','receipt')}${navItem('payments','Lịch sử thanh toán','wallet')}${navItem('expenses','Chi phí vận hành','expense')}
   ${navItem('deposits','Sổ tiền cọc','wallet')}${navItem('prepayments','Tiền thuê trả trước','calendar')}${navItem('services','Phí dịch vụ','layers')}${navItem('invoiceTools','Hóa đơn nháp & VietQR','receipt')}
-  <div class="nav-label">VẬN HÀNH</div>${navItem('residents','Người cùng phòng','users')}${navItem('meterTools','Điện nước nâng cao','meter')}${navItem('handovers','Bàn giao & Trả phòng','contract')}${navItem('tickets','Yêu cầu sửa chữa','wrench')}${navItem('reports','Báo cáo thống kê','report')}${navItem('imports','Nhập dữ liệu Excel','download')}
+  <div class="nav-label">VẬN HÀNH</div>${navItem('residents','Người cùng phòng','users')}${navItem('meterTools','Điện nước nâng cao','meter')}${navItem('tenantApprovals','Duyệt chỉ số khách thuê','check')}${navItem('handovers','Bàn giao & Trả phòng','contract')}${navItem('tickets','Yêu cầu sửa chữa','wrench')}${navItem('reports','Báo cáo thống kê','report')}${navItem('imports','Nhập dữ liệu Excel','download')}
   <div class="nav-label">HỆ THỐNG</div>${navItem('access','Phân quyền nhân viên','shield')}${navItem('automation','Hóa đơn định kỳ','clock')}${navItem('backups','Sao lưu / Phục hồi','settings')}${navItem('bankaccounts','Tài khoản ngân hàng & QR','wallet')}${navItem('zalo','Thông báo Zalo','bell')}${navItem('settings','Cài đặt','settings')}${admin?navItem('users','Quản lý tài khoản','users')+navItem('audit','Nhật ký thao tác','shield'):''}
   <div class="side-bottom"><div class="side-help">${ic('info')} <strong>TrọFlow Self-hosted</strong><p>Dữ liệu lưu an toàn trong Docker volume của riêng bạn.</p></div><div class="user-pill"><div class="avatar">${esc(initials(state.user?.full_name))}</div><div style="min-width:0"><strong>${esc(state.user?.full_name)}</strong><span>${admin?'Quản trị viên':'Nhân viên'}</span></div><button class="icon-btn" data-action="logout" title="Đăng xuất" style="margin-left:auto;background:transparent;color:#acbbcc;border:0">${ic('logout')}</button></div></div>
  </aside><div class="main-shell"><header class="topbar"><div class="topbar-left"><button class="icon-btn menu-trigger" data-action="menu" aria-label="Mở menu">${ic('menu')}</button><span class="breadcrumbs">TrọFlow &nbsp; / &nbsp; <b id="breadcrumb">${views[state.view]}</b></span></div><div class="topbar-right"><label class="top-search">${ic('search')}<input id="global-search" type="search" placeholder="Tìm trong trang hiện tại..." aria-label="Tìm kiếm"></label>${canPage('tickets')?`<button class="icon-btn" data-nav="tickets" title="Sự cố chưa xử lý">${ic('bell')}</button>`:''}<button class="icon-btn" data-action="refresh" title="Làm mới dữ liệu">${ic('refresh')}</button><div class="avatar" title="${esc(state.user?.full_name)}">${esc(initials(state.user?.full_name))}</div></div></header><main class="content" id="view-content"></main></div></div>`;
@@ -116,6 +116,7 @@ async function refresh(){try{
  const keys=['properties','rooms','tenants','contracts','readings','invoices','payments','expenses','tickets','dashboard'];
  const values=await Promise.all(keys.map(async x=>{try{return await api(x);}catch(e){if(e.status===403)return x==='dashboard'?{}:[];throw e;}}));
  keys.forEach((k,i)=>state.data[k]=values[i]);
+ if(state.view==='tenantApprovals')await loadTenantApprovals();
  if(state.view==='reports')await loadReport();
  if(state.view==='utilitymeters')await loadUtilityData();
  if(['users','audit'].includes(state.view))await loadAdminPage();
@@ -127,7 +128,7 @@ async function loadAdminPage(){if(state.view==='users')state.data.users=await ap
 async function navigate(view){if(!views[view]||!canPage(view))return;
  state.view=view;state.search='';state.propertyFilter='';const input=$('#global-search');if(input)input.value='';
  $$('.nav-item').forEach(x=>x.classList.toggle('active',x.dataset.nav===view));const crumb=$('#breadcrumb');if(crumb)crumb.textContent=views[view];closeMenu();
- if(view==='reports')await loadReport();if(view==='utilitymeters')await loadUtilityData();if(['users','audit'].includes(view))await loadAdminPage();renderPage();window.scrollTo(0,0);
+ if(view==='tenantApprovals')await loadTenantApprovals();if(view==='reports')await loadReport();if(view==='utilitymeters')await loadUtilityData();if(['users','audit'].includes(view))await loadAdminPage();renderPage();window.scrollTo(0,0);
 }
 function closeMenu(){state.sidebar=false;$('#sidebar')?.classList.remove('open');$('#side-overlay')?.classList.remove('show')}
 function heading(label,description,actions='',eyebrow='TRỌFLOW WORKSPACE'){
@@ -144,7 +145,7 @@ const emptyState=(title,description,action='')=>`<div class="empty-state"><div c
 function renderPage(){const el=$('#view-content');if(!el||!state.user)return;
  if(standalonePages[state.view]){el.innerHTML=`<iframe title="${esc(views[state.view])}" class="feature-frame" src="/integrations?page=${standalonePages[state.view]}"></iframe>`;return;}
  if(integratedPages[state.view]){el.innerHTML=`<iframe title="${esc(views[state.view])}" class="feature-frame" src="/advanced?embedded=1&page=${integratedPages[state.view]}"></iframe>`;return;}
- try{const viewsRender={dashboard:pageDashboard,properties:pageProperties,utilitymeters:pageUtilityMeters,rooms:pageRooms,tenants:pageTenants,contracts:pageContracts,readings:pageReadings,invoices:pageInvoices,payments:pagePayments,expenses:pageExpenses,tickets:pageTickets,reports:pageReports,settings:pageSettings,users:pageUsers,audit:pageAudit};el.innerHTML=viewsRender[state.view]();}catch(e){console.error(e);el.innerHTML=emptyState('Không thể hiển thị trang',e.message);}
+ try{const viewsRender={dashboard:pageDashboard,properties:pageProperties,utilitymeters:pageUtilityMeters,rooms:pageRooms,tenants:pageTenants,contracts:pageContracts,readings:pageReadings,invoices:pageInvoices,payments:pagePayments,expenses:pageExpenses,tickets:pageTickets,reports:pageReports,settings:pageSettings,tenantApprovals:pageTenantApprovals,users:pageUsers,audit:pageAudit};el.innerHTML=viewsRender[state.view]();}catch(e){console.error(e);el.innerHTML=emptyState('Không thể hiển thị trang',e.message);}
 }
 function pageDashboard(){const d=state.data.dashboard||{};const total=d.rooms_total||0;const occupied=d.occupied||0;const occupancy=total?Math.round(occupied/total*100):0;
  const max=Math.max(1,...(d.trends||[]).flatMap(x=>[x.income,x.expense]));
@@ -204,7 +205,7 @@ function pageExpenses(){const arr=filter(state.data.expenses,['property_name','c
  return heading('Chi phí vận hành','Theo dõi các khoản chi để biết lợi nhuận thực tế.',`${exportBtn('expenses')}${addBtn('expenses','Thêm khoản chi')}`)+`<div class="card">${toolbar(propFilter(),'',arr.length)}${table(['NGÀY CHI','CƠ SỞ','LOẠI CHI','NỘI DUNG','SỐ TIỀN',''],arr.map(x=>`<tr><td>${dateVN(x.spent_on)}</td><td class="cell-name">${esc(x.property_name)}</td><td>${esc(categories[x.category]||x.category)}</td><td>${esc(x.description||'—')}</td><td class="cell-name negative">-${amount(x.amount)}</td><td>${actionButtons('expenses',x.id)}</td></tr>`),arr.length,'Chưa ghi nhận chi phí','Bổ sung các khoản chi vận hành để báo cáo phản ánh đúng dòng tiền.')}</div>`;
 }
 function pageTickets(){const arr=filter(state.data.tickets,['title','room_code','property_name','description','category','status']);
- return heading('Yêu cầu sửa chữa','Tiếp nhận, ưu tiên và theo dõi tiến độ xử lý sự cố.',`${exportBtn('tickets')}${addBtn('tickets','Tạo yêu cầu')}`)+`<div class="card">${toolbar(propFilter(),'',arr.length)}${table(['SỰ CỐ','PHÒNG','DANH MỤC','ƯU TIÊN','NGÀY BÁO','TRẠNG THÁI',''],arr.map(x=>`<tr><td><div class="cell-name">${esc(x.title)}</div><div class="cell-sub" style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.description||'Không có mô tả')}</div></td><td><div class="cell-name">${esc(x.room_code)}</div><div class="cell-sub">${esc(x.property_name)}</div></td><td>${esc(categories[x.category]||x.category)}</td><td>${badge(x.priority)}</td><td>${dateVN(x.reported_at)}</td><td>${badge(x.status)}</td><td>${actionButtons('tickets',x.id)}</td></tr>`),arr.length,'Không có sự cố','Thêm sự cố khi có hạng mục cần sửa chữa.')}</div>`;
+ return heading('Yêu cầu sửa chữa','Tiếp nhận, ưu tiên và theo dõi tiến độ xử lý sự cố.',`${exportBtn('tickets')}${addBtn('tickets','Tạo yêu cầu')}`)+`<div class="card">${toolbar(propFilter(),'',arr.length)}${table(['SỰ CỐ','PHÒNG','DANH MỤC','ƯU TIÊN','NGÀY BÁO','TRẠNG THÁI',''],arr.map(x=>`<tr><td><div class="cell-name">${esc(x.title)}</div><div class="cell-sub" style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.description||'Không có mô tả')}</div>${x.reported_by_tenant_id?'<div class="cell-sub" style="color:#0a9486">Khách thuê gửi</div>':''}<button type="button" class="btn btn-outline" data-ticket-photos="${x.id}">${ic('images')} Xem ảnh</button></td><td><div class="cell-name">${esc(x.room_code)}</div><div class="cell-sub">${esc(x.property_name)}</div></td><td>${esc(categories[x.category]||x.category)}</td><td>${badge(x.priority)}</td><td>${dateVN(x.reported_at)}</td><td>${badge(x.status)}</td><td>${actionButtons('tickets',x.id)}</td></tr>`),arr.length,'Không có sự cố','Thêm sự cố khi có hạng mục cần sửa chữa.')}</div>`;
 }
 function pageReports(){const r=state.report;if(!r)return heading('Báo cáo tài chính','Dữ liệu đang được tải...');
  const arr=r.invoices||[];
@@ -217,7 +218,7 @@ function pageReports(){const r=state.report;if(!r)return heading('Báo cáo tài
 }
 function pageSettings(){const admin=state.user.role==='admin';
  return heading('Cài đặt & Sao lưu','Quản lý dữ liệu, bảo mật và cấu hình hệ thống.',`<button class="btn btn-outline" data-action="password">${ic('shield')} Đổi mật khẩu</button>`)+
- `<div class="settings-grid"><section class="card settings-tile"><div class="card-header"><h2>Xuất dữ liệu ra CSV</h2></div><p>Tải danh sách để lưu trữ, kiểm tra đối soát hoặc mở bằng Excel. File được mã hóa UTF-8 để hiển thị tiếng Việt.</p><div class="export-grid">${[['properties','Cơ sở'],['rooms','Phòng trọ'],['tenants','Khách thuê'],['contracts','Hợp đồng'],['readings','Điện nước'],['invoices','Hóa đơn'],['payments','Thanh toán'],['expenses','Chi phí'],['tickets','Sự cố']].map(([k,label])=>`<a class="export-item" href="/api/export/${k}">${esc(label)} ${ic('download',15)}</a>`).join('')}</div></section>
+ `${admin?`<section class="card settings-tile" style="margin-bottom:20px"><div class="card-header"><h2>Thông tin chủ cho thuê cho khách thuê</h2></div><p>Họ tên, giới tính, tuổi, ảnh, địa chỉ, số điện thoại, email. Chọn cơ sở và bật/tắt riêng từng thông tin hiển thị trong cổng khách thuê.</p><button class="btn btn-primary" data-action="owner-settings">${ic('settings')} Cấu hình chủ cho thuê</button></section>`:''}<div class="settings-grid"><section class="card settings-tile"><div class="card-header"><h2>Xuất dữ liệu ra CSV</h2></div><p>Tải danh sách để lưu trữ, kiểm tra đối soát hoặc mở bằng Excel. File được mã hóa UTF-8 để hiển thị tiếng Việt.</p><div class="export-grid">${[['properties','Cơ sở'],['rooms','Phòng trọ'],['tenants','Khách thuê'],['contracts','Hợp đồng'],['readings','Điện nước'],['invoices','Hóa đơn'],['payments','Thanh toán'],['expenses','Chi phí'],['tickets','Sự cố']].map(([k,label])=>`<a class="export-item" href="/api/export/${k}">${esc(label)} ${ic('download',15)}</a>`).join('')}</div></section>
  <section class="card settings-tile"><div class="card-header"><h2>Sao lưu dữ liệu</h2></div><p>Tạo bản sao SQLite đầy đủ gồm thông tin cơ sở, khách thuê, hợp đồng, hóa đơn, thanh toán và tài khoản. File sao lưu chứa dữ liệu cá nhân, hãy bảo quản an toàn.</p>${admin?`<a class="btn btn-primary" href="/api/backup">${ic('download')} Tải bản sao lưu .sqlite3</a>`:`<div class="info-banner">${ic('shield')} Chỉ tài khoản quản trị được sao lưu toàn bộ hệ thống.</div>`}<div class="separator"></div><div class="config-row"><span>Hệ thống</span><strong>TrọFlow 4.0</strong></div><div class="config-row"><span>Cơ sở dữ liệu</span><strong>SQLite / Docker volume</strong></div><div class="config-row"><span>Quyền đang dùng</span><strong>${admin?'Quản trị viên':'Nhân viên'}</strong></div></section>
  <section class="card settings-tile"><div class="card-header"><h2>Bảo mật & vận hành</h2></div><p>TrọFlow sử dụng phiên đăng nhập có hạn, băm mật khẩu và phân quyền. Khi truy cập từ internet, cần bật HTTPS qua reverse proxy và cấu hình COOKIE_SECURE=1.</p><button class="btn btn-outline" data-action="password">${ic('shield')} Thay đổi mật khẩu</button></section>
  <section class="card settings-tile"><div class="card-header"><h2>Thiết lập đơn giá</h2></div><p>Giá điện, nước và phí dịch vụ được thiết lập riêng theo từng cơ sở. Các hóa đơn đã phát hành giữ nguyên giá trị ban đầu.</p><button class="btn btn-outline" data-nav="properties">${ic('building')} Quản lý giá theo cơ sở</button></section></div>`;
@@ -303,10 +304,43 @@ function openForm(entity,id=null,extra={}){
  const title=(record?'Chỉnh sửa ':'Thêm ')+({properties:'cơ sở',rooms:'phòng trọ',tenants:'khách thuê',contracts:'hợp đồng',readings:'chỉ số điện nước',payments:'giao dịch thu tiền',expenses:'khoản chi',tickets:'yêu cầu sửa chữa',users:'tài khoản'}[entity]||'dữ liệu');
  const hint=entity==='contracts'&&!record?'Hợp đồng chỉ được ký cho phòng đang sẵn sàng. Mỗi phòng có tối đa một hợp đồng hiệu lực.':entity==='readings'?'Chỉ số mới phải lớn hơn hoặc bằng chỉ số cũ. Có thể tự điền chỉ số kỳ trước khi chọn phòng.':entity==='users'?'Nhân viên có thể vận hành dữ liệu; chỉ quản trị viên quản lý tài khoản, sao lưu và xóa dữ liệu.':entity==='payments'?'Khoản thu được đối trừ vào hóa đơn được chọn và không được vượt quá số tiền còn thiếu.':'';
  modalContext={type:'entity',entity,id,values,fields};
- openModal(title,`<form id="entity-form"><div class="form-grid">${fields.map(f=>fieldHTML(f,values)).join('')}</div>${entity==='readings'?'<div class="modal-hint" id="reading-tenant" aria-live="polite"></div>':''}${['readings','tenants'].includes(entity)?photoFields(entity,record):''}${hint?`<div class="modal-hint">${esc(hint)}</div>`:''}</form>`,
+ openModal(title,`<form id="entity-form"><div class="form-grid">${fields.map(f=>fieldHTML(f,values)).join('')}</div>${entity==='readings'?'<div class="modal-hint" id="reading-tenant" aria-live="polite"></div>':''}${entity==='tenants'&&state.user?.role==='admin'?tenantPortalPanel(record):''}${['readings','tenants'].includes(entity)?photoFields(entity,record):''}${entity==='tickets'?`<section class="ticket-photo-form"><label style="font-weight:700">Ảnh vị trí cần sửa chữa (tối đa 5 ảnh)</label><input type="file" name="photos" id="ticket-photos-input" accept="image/jpeg,image/png,image/webp" multiple><div id="ticket-photo-preview" class="ticket-photo-preview"></div>${record?`<button type="button" class="btn btn-outline" data-ticket-photos="${record.id}">Xem/xóa ảnh đã có</button>`:''}<p class="meta-note">Tối đa 5 ảnh, 3 MB mỗi ảnh, dùng chung với cổng khách thuê. Ảnh chỉ người có quyền được xem.</p></section>`:''}${hint?`<div class="modal-hint">${esc(hint)}</div>`:''}</form>`,
  `<button class="btn btn-outline" data-action="close-modal">Hủy</button><button class="btn btn-primary" type="submit" form="entity-form">${ic('check')} ${record?'Lưu thay đổi':'Tạo mới'}</button>`);
  if(entity==='readings'){updateReadingRooms($('#entity-form'));if(!record)fillPrevious();}
 }
+function tenantPortalPanel(record){
+ const prop=record?.portal_property_id||state.data.properties?.[0]?.id||'';
+ return `<section class="portal-admin-box"><h3>Tài khoản đăng nhập của khách thuê</h3><label class="portal-toggle"><input type="checkbox" name="portal_enabled" ${record?.portal_enabled?'checked':''}> Bật quyền đăng nhập cổng khách thuê</label>
+ <label>Cơ sở áp dụng</label><select name="portal_property_id" required>${state.data.properties.map(p=>`<option value="${p.id}" ${String(prop)===String(p.id)?'selected':''}>${esc(p.name)}</option>`).join('')}</select>
+ <p class="meta-note">User = số điện thoại; mật khẩu ban đầu = tên cuối của khách + _ + tên cơ sở (không dấu). Khách không có quyền đổi mật khẩu. Khi public Internet cần thêm mã bảo vệ do Admin cấp. Mã chỉ hiển thị một lần khi cấp hoặc đặt lại.</p>
+ ${record?.portal_property_id?`<button class="btn btn-outline" type="button" data-portal-reset="${record.id}">${ic('refresh')} Cấp lại thông tin đăng nhập</button>`:''}</section>`;
+}
+function showPortalCredentials(data){
+ if(!data)return;
+ openModal('Thông tin đăng nhập khách thuê',`<div class="portal-admin-box"><p>Gửi trực tiếp các thông tin sau cho khách thuê qua kênh riêng. <b>Mã bảo vệ chỉ hiển thị lần này.</b></p><p>Số điện thoại: <strong>${esc(data.username)}</strong></p><p>Mật khẩu: <strong>${esc(data.password)}</strong></p><p>Mã bảo vệ: <strong>${esc(data.access_code)}</strong></p><p>Trang đăng nhập: <code>/tenant</code></p><p class="meta-note">Không gửi mật khẩu trong nhóm Zalo công khai. Đổi tên/cơ sở không tự thay đổi mật khẩu hiện có; Admin có thể cấp lại theo thông tin hiện tại.</p></div>`, `<button class="btn btn-primary" data-action="close-modal">Đã lưu thông tin</button>`);
+}
+async function loadTenantApprovals(){try{state.data.tenantApprovals=await api('tenant/admin/submissions');}catch(e){state.data.tenantApprovals=[];toast(e.message,true);}}
+function pageTenantApprovals(){const arr=state.data.tenantApprovals||[];
+ return heading('Duyệt chỉ số khách thuê','Ảnh và chỉ số do khách gửi chỉ trở thành chỉ số chính thức sau khi nhân viên có quyền duyệt xác nhận.',`<button class="btn btn-outline" data-action="refresh">${ic('refresh')} Cập nhật</button>`)
+ +`<div class="card">${table(['PHÒNG / KHÁCH','KỲ','ĐIỆN','NƯỚC','ẢNH','TRẠNG THÁI','THAO TÁC'],arr.map(x=>`<tr><td><b>${esc(x.room_code)}</b> · ${esc(x.property_name)}<div class="cell-sub">${esc(x.tenant_name)} · ${esc(x.phone)}</div></td><td>${esc(x.period)}</td><td>${esc(x.electric_old)} → <b>${esc(x.electric_new)}</b></td><td>${esc(x.water_old)} → <b>${esc(x.water_new)}</b></td><td><a target="_blank" rel="noopener" href="/api/tenant/admin/submissions/${x.id}/photo/electric">Điện</a> · <a target="_blank" rel="noopener" href="/api/tenant/admin/submissions/${x.id}/photo/water">Nước</a></td><td>${esc({pending:'Đang chờ',approved:'Đã duyệt',rejected:'Đã từ chối'}[x.status]||x.status)}${x.feedback?`<div class="cell-sub">${esc(x.feedback)}</div>`:''}</td><td>${x.status==='pending'&&can('readings.record')?`<button class="btn btn-primary" data-meter-review="${x.id}" data-decision="approve">Duyệt</button> <button class="btn btn-outline" data-meter-review="${x.id}" data-decision="reject">Từ chối</button>`:'—'}</td></tr>`),arr.length,'Chưa có chỉ số khách gửi','Khách thuê sẽ gửi ảnh đồng hồ tại cổng /tenant.')}</div>`;
+}
+async function openOwnerSettings(){
+ if(state.user?.role!=='admin')return;
+ const props=state.data.properties||[];
+ if(!props.length){toast('Hãy thêm cơ sở trước.',true);return;}
+ const propertyId=Number(state.ownerProperty||props[0].id);
+ try{
+ const p=await api('tenant/admin/owner/'+propertyId);
+ modalContext={type:'owner'};
+ const fields=[['name','Họ tên','text'],['gender','Giới tính','text'],['age','Tuổi','number'],['address','Địa chỉ','text'],['phone','Số điện thoại','tel'],['email','Email','email']];
+ const propertyOptions=props.map(x=>`<option value="${x.id}" ${x.id===propertyId?'selected':''}>${esc(x.name)}</option>`).join('');
+ openModal('Chủ cho thuê & thông tin công khai',`<form id="owner-form" class="owner-fields"><label>Chọn cơ sở</label><select id="owner-property">${propertyOptions}</select><div class="form-grid">${fields.map(([key,label,type])=>`<div class="field"><label>${label}</label><input type="${type}" name="${key}" value="${esc(p[key]??'')}"><label class="portal-toggle"><input type="checkbox" name="show_${key}" ${p['show_'+key]?'checked':''}> Hiển thị cho khách thuê</label></div>`).join('')}</div><div class="field"><label>Ảnh chủ cho thuê</label>${p.photo_path?`<img class="tenant-photo" src="/api/tenant/admin/owner/${propertyId}/photo" alt="Ảnh chủ nhà">`:''}<input type="file" name="photo" accept="image/png,image/jpeg,image/webp"><label class="portal-toggle"><input type="checkbox" name="show_photo" ${p.show_photo?'checked':''}> Hiển thị ảnh chủ cho thuê</label></div><p class="meta-note">Thông tin không được tích chọn sẽ không có trong API khách thuê. Mỗi cơ sở có cấu hình riêng.</p></form>`,`<button class="btn btn-outline" data-action="close-modal">Hủy</button><button class="btn btn-primary" form="owner-form" type="submit">Lưu thông tin</button>`,true);
+ }catch(e){toast(e.message,true);}
+}
+async function saveOwner(form){const prop=Number($('#owner-property').value);const d=new FormData(form);const payload={};for(const [k,v] of d.entries()){if(k!=='photo')payload[k]=v;}
+ for(const k of ['name','gender','age','address','phone','email','photo'])payload['show_'+k]=form.elements['show_'+k]?.checked||false;
+ try{await api('tenant/admin/owner/'+prop,'PUT',payload);const file=form.elements.photo.files[0];if(file){const body=new FormData();body.append('file',file);const r=await fetch('/api/tenant/admin/owner/'+prop+'/photo',{method:'POST',headers:{'x-csrf-token':state.csrf},body,credentials:'same-origin'});if(!r.ok){const detail=await r.json().catch(()=>({}));throw Error(detail.detail||'Không lưu được ảnh chủ nhà.');}}
+ closeModal();toast('Đã lưu thông tin và các trường công khai.');}catch(e){toast(e.message,true);}}
 function photoFields(entity,record){
  const uploadable=can('files.upload')&&(entity==='tenants'?can('tenants.edit'):can('readings.photos'));
  if(!uploadable)return '<div class="modal-hint">Bạn không có quyền tải ảnh lên. Liên hệ quản trị viên để cấp quyền tệp/ảnh.</div>';
@@ -427,11 +461,30 @@ async function downloadInvoicePNG(id){
 function openConfirm(title,body,cb){confirmAction=cb;modalContext={type:'confirm'};
  openModal(title,`<div class="confirm-copy">${esc(body)}</div>`,`<button class="btn btn-outline" data-action="close-modal">Hủy</button><button class="btn btn-danger" data-action="confirm">${ic('check')} Xác nhận</button>`);
 }
+async function apiMultipart(path,method,formdata){
+ const r=await fetch('/api/'+path,{method,credentials:'same-origin',headers:{'x-csrf-token':state.csrf||''},body:formdata});
+ const j=await r.json().catch(()=>({}));if(!r.ok)throw Error(j.detail||'Không thể tải ảnh/lưu yêu cầu.');return j;
+}
+async function showTicketPhotos(id){
+ try{const photos=await api('v8/tickets/'+id+'/photos');
+ const grid=photos.length?photos.map(photo=>`<div class="ticket-photo-item"><a href="${esc(photo.url)}" target="_blank" rel="noopener"><img src="${esc(photo.url)}" loading="lazy" alt="Ảnh sự cố"></a>${can('tickets.edit')?`<button class="btn btn-outline" data-remove-ticket-photo="${photo.id}" data-ticket="${id}">Xóa ảnh</button>`:''}</div>`).join(''):'<p>Chưa có ảnh.</p>';
+ modalContext={type:'ticketphotos'};
+ openModal('Ảnh yêu cầu sửa chữa',`<div class="ticket-photo-preview">${grid}</div>`,`<button class="btn btn-primary" data-action="close-modal">Đóng</button>`);
+ }catch(e){toast(e.message,true);}
+}
 async function submitEntity(form){if(busy)return;busy=true;
  const ctx=modalContext;if(!ctx||ctx.type!=='entity')return;
  const payload={...ctx.values,...Object.fromEntries(new FormData(form).entries())};
  for(const field of ['tenant_photo','tenant_id_front','tenant_id_back','electric_photo_file','water_photo_file'])delete payload[field];
+ if(ctx.entity==='tickets'){
+    try{const fd=new FormData(form);const imgs=fd.getAll('photos').filter(f=>f&&f.name);if(imgs.length>5)throw Error('Chỉ được chọn tối đa 5 ảnh.');
+      if(imgs.some(f=>f.size>3*1024*1024))throw Error('Mỗi ảnh không được quá 3 MB.');
+      const result=await apiMultipart('v8/tickets'+(ctx.id?'/'+ctx.id:''),ctx.id?'PUT':'POST',fd);
+      closeModal();await refresh();toast('Đã lưu yêu cầu sửa chữa ('+(result.photos_added??result.photos??0)+' ảnh mới).');
+    }catch(ex){toast(ex.message,true);}finally{busy=false;}return;
+ }
  if(ctx.entity==='readings'&&!activeTenantFor(Number(payload.room_id),payload.period)){toast('Phòng chưa có người thuê trong kỳ ghi chỉ số.',true);busy=false;return;}
+ if(ctx.entity==='tenants'&&state.user?.role==='admin'){payload.portal_enabled=Boolean(form.elements.portal_enabled?.checked);payload.portal_property_id=Number(form.elements.portal_property_id?.value||0);}
  if(ctx.entity==='rooms'&&ctx.id&&ctx.values.status==='occupied')payload.condition='ready';
  // Editing a contract does not accept room/tenant reassignment.
  if(ctx.entity==='contracts'&&ctx.id){delete payload.room_id;delete payload.tenant_id;}
@@ -440,7 +493,7 @@ async function submitEntity(form){if(busy)return;busy=true;
  if(ctx.entity==='readings'||ctx.entity==='tenants'){
    try{await uploadEntityPhotos(ctx.entity,result.id||ctx.id,form);}catch(e){uploadError=e.message;}
  }
- closeModal();await refresh();toast(uploadError?'Dữ liệu đã lưu nhưng ảnh chưa tải lên: '+uploadError:'Đã lưu dữ liệu thành công.',Boolean(uploadError));}
+ closeModal();await refresh();toast(uploadError?'Dữ liệu đã lưu nhưng ảnh chưa tải lên: '+uploadError:'Đã lưu dữ liệu thành công.',Boolean(uploadError));if(result.portal_credentials)showPortalCredentials(result.portal_credentials);}
  catch(e){toast(e.message,true);}finally{busy=false;}
 }
 async function submitGenerate(form){if(busy)return;busy=true;const payload=Object.fromEntries(new FormData(form));
@@ -475,7 +528,13 @@ document.addEventListener('click',async e=>{
  if(target.dataset.delete){const entity=target.dataset.delete,id=target.dataset.id;const titles={properties:'cơ sở',rooms:'phòng',tenants:'khách thuê',invoices:'hóa đơn',payments:'giao dịch thanh toán',expenses:'khoản chi',tickets:'yêu cầu sửa chữa'};
  openConfirm('Xóa dữ liệu',`Bạn chắc chắn muốn xóa ${titles[entity]||'bản ghi'} #${id}? Thao tác này không thể hoàn tác và sẽ bị từ chối nếu dữ liệu còn liên kết.`,()=>deleteEntity(entity,id));return;}
  if(target.dataset.end){if(!can('contracts.end'))return;const id=target.dataset.end;openConfirm('Kết thúc hợp đồng','Kết thúc hợp đồng sẽ trả phòng về trạng thái trống. Hóa đơn và lịch sử thanh toán vẫn được lưu lại. Hãy xác nhận khi khách đã bàn giao phòng.',()=>endContract(id));return;}
+ if(target.dataset.ticketPhotos){await showTicketPhotos(Number(target.dataset.ticketPhotos));return;}
+ if(target.dataset.removeTicketPhoto){const tid=Number(target.dataset.ticket),pid=Number(target.dataset.removeTicketPhoto);if(confirm('Xóa ảnh đã chọn?')){try{await api('v8/tickets/'+tid+'/photos/'+pid,'DELETE');await showTicketPhotos(tid);}catch(ex){toast(ex.message,true);}}return;}
+ if(target.dataset.portalReset){try{const res=await api('tenant/admin/accounts/'+target.dataset.portalReset+'/reset','POST',{});showPortalCredentials(res);}catch(ex){toast(ex.message,true);}return;}
+ if(target.dataset.meterReview){const id=Number(target.dataset.meterReview),decision=target.dataset.decision;
+  openConfirm(decision==='approve'?'Duyệt chỉ số':'Từ chối chỉ số',decision==='approve'?'Xác nhận chuyển số khách thuê gửi thành chỉ số chính thức?':'Xác nhận từ chối đề nghị ghi chỉ số này?',async()=>{try{await api('tenant/admin/submissions/'+id+'/review','POST',{decision,feedback:decision==='reject'?'Chỉ số hoặc ảnh cần kiểm tra lại.':''});closeModal();await loadTenantApprovals();renderPage();toast('Đã xử lý đề nghị.');}catch(err){toast(err.message,true);}});return;}
  if(target.dataset.action){const a=target.dataset.action;
+ if(a==='owner-settings'){await openOwnerSettings();return;}
  if(a==='close-modal'){closeModal();return;}
  if(a==='generate'){if(can('invoices.publish'))openGenerate();return;}
  if(a==='password'){openPassword();return;}
@@ -491,6 +550,7 @@ document.addEventListener('click',async e=>{
 });
 document.addEventListener('click',e=>{if(e.target?.id==='side-overlay')closeMenu();});
 document.addEventListener('submit',e=>{
+ if(e.target.id==='owner-form'){e.preventDefault();saveOwner(e.target);return;}
  if(e.target.id==='utility-form'){e.preventDefault();saveUtility(e.target);return;}
  if(['entity-form','generate-form','password-form'].includes(e.target.id)){
  e.preventDefault();if(e.target.id==='entity-form')submitEntity(e.target);
@@ -499,6 +559,14 @@ document.addEventListener('submit',e=>{
  }
 });
 document.addEventListener('change',async e=>{
+ if(e.target.id==='ticket-photos-input'){
+   const files=[...e.target.files], el=document.getElementById('ticket-photo-preview');
+   if(files.length>5 || files.some(f=>f.size>3*1024*1024)){toast('Tối đa 5 ảnh, mỗi ảnh không quá 3 MB.',true);e.target.value='';if(el)el.innerHTML='';return;}
+   if(el){el.innerHTML=files.map((f,i)=>`<div class="ticket-photo-item"><img alt="Ảnh đính kèm ${i+1}" src="${URL.createObjectURL(f)}"><small>${esc(f.name)}</small></div>`).join('');}
+   return;
+ }
+
+ if(e.target.id==='owner-property'){state.ownerProperty=e.target.value;await openOwnerSettings();return;}
  const control=e.target.dataset.control;
  if(control==='property'){state.propertyFilter=e.target.value;renderPage();return;}
  if(control==='utilityYear'){state.utilityYear=Number(e.target.value);await loadUtilityData();renderPage();return;}

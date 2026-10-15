@@ -1,0 +1,10 @@
+# Caddy running directly on Ubuntu host, where the application binds 127.0.0.1:8088.
+# Replace tro.example.com with your own DNS hostname.
+# If using another reverse proxy, apply equivalent HTTPS + body limits + headers.
+tro.example.com {
+    encode zstd gzip
+    request_body {
+        max_size 5MB
+    }
+    reverse_proxy 127.0.0.1:8088
+}

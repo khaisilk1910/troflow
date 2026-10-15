@@ -13,6 +13,12 @@ CREATE TABLE IF NOT EXISTS users (
  role TEXT NOT NULL CHECK(role IN ('admin','staff')),
  active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
+CREATE TABLE IF NOT EXISTS auth_failures (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ ip_hash TEXT NOT NULL, username_hash TEXT NOT NULL, at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_auth_failures_ip ON auth_failures(ip_hash,at);
+CREATE INDEX IF NOT EXISTS idx_auth_failures_user ON auth_failures(username_hash,at);
 CREATE TABLE IF NOT EXISTS sessions (
  token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
  csrf_token TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
@@ -116,7 +122,7 @@ def connect():
 
 
 def init_db():
-    from .migrations import migrate, migrate_v6, restore_pending
+    from .migrations import migrate, migrate_v6, migrate_v7, migrate_v8, restore_pending
     existing = DB_PATH.exists()
     restore_pending(DB_PATH)
     with connect() as con:
@@ -125,6 +131,8 @@ def init_db():
         version_before = con.execute('PRAGMA user_version').fetchone()[0]
         migrate(con, DB_PATH, existing)
         migrate_v6(con, DB_PATH, existing and version_before >= 5)
+        migrate_v7(con, DB_PATH, existing and version_before >= 6)
+        migrate_v8(con, DB_PATH, existing and version_before >= 7)
 
 
 @contextmanager

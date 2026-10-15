@@ -11,14 +11,17 @@ import secrets
 import sqlite3
 import tempfile
 import time
-from collections import defaultdict
 from contextlib import asynccontextmanager
+from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Response, HTTPException, Depends
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+from argon2 import PasswordHasher
+from argon2.exceptions import VerifyMismatchError, VerificationError
 
 from .db import init_db, connect, tx, one, rows, DB_PATH
 
@@ -37,14 +40,40 @@ async def lifespan(app):
         stop()
 
 
-app = FastAPI(title='TrọFlow API', docs_url=None, redoc_url=None, lifespan=lifespan)
+app = FastAPI(title='TrọFlow API', docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+# Restrict DNS rebinding / forged Host header in Internet-facing mode.
+if os.getenv('TROFLOW_PUBLIC_MODE','0')=='1':
+    allowed=[host.strip() for host in os.getenv('TROFLOW_ALLOWED_HOSTS','').split(',') if host.strip()]
+    if not allowed:
+        raise RuntimeError('TROFLOW_ALLOWED_HOSTS must be configured in public mode.')
+    app.add_middleware(TrustedHostMiddleware,allowed_hosts=allowed+['localhost','127.0.0.1'])
 STATIC = Path(__file__).parent / 'static'
-COOKIE_NAME = 'troflow_session'
-COOKIE_SECURE = os.getenv('COOKIE_SECURE', '0') == '1'
-LOGIN_ATTEMPTS = defaultdict(list)
+PUBLIC_MODE = os.getenv('TROFLOW_PUBLIC_MODE', '0') == '1'
+COOKIE_NAME = '__Host-troflow_session' if PUBLIC_MODE else 'troflow_session'
+COOKIE_SECURE = PUBLIC_MODE or os.getenv('COOKIE_SECURE', '0') == '1'
+# Persistent login throttling uses SQLite so container restarts cannot reset it.
+LOGIN_WINDOW_SECONDS = 15 * 60
+LOGIN_USERNAME_LIMIT = 10
+LOGIN_IP_LIMIT = 100
 
 @app.middleware('http')
 async def security_headers(request: Request, call_next):
+    # Proxy should enforce a hard streaming request-body limit as well.
+    declared_length=request.headers.get('content-length')
+    if declared_length:
+        try:
+            if int(declared_length)<0:
+                return JSONResponse({'detail':'Content-Length không hợp lệ.'},status_code=400)
+            # Up to five normalized repair photos (3 MB each) need a larger
+            # multipart envelope. Keep the previous strict cap elsewhere.
+            path=request.url.path
+            limit=(18*1024*1024 if path.startswith(('/api/tenant/tickets','/api/v8/tickets'))
+                   else 7*1024*1024 if path=='/api/tenant/readings/submit'
+                   else 5*1024*1024)
+            if int(declared_length)>limit:
+                return JSONResponse({'detail':'Yêu cầu quá lớn.'},status_code=413)
+        except ValueError:
+            return JSONResponse({'detail':'Content-Length không hợp lệ.'},status_code=400)
     if request.method in ('POST','PUT','PATCH','DELETE'):
         # Block cross-site requests, including unauthenticated setup/login calls.
         origin = request.headers.get('origin')
@@ -52,16 +81,22 @@ async def security_headers(request: Request, call_next):
             from urllib.parse import urlsplit
             o = urlsplit(origin)
             host = request.headers.get('host','')
-            if not o.hostname or o.netloc.lower() != host.lower() or o.scheme not in ('http','https'):
+            if not o.hostname or o.netloc.lower() != host.lower() or o.scheme not in (('https',) if PUBLIC_MODE else ('http','https')):
                 return JSONResponse({'detail':'Yêu cầu khác nguồn bị từ chối.'}, status_code=403)
         elif request.headers.get('sec-fetch-site') == 'cross-site':
             return JSONResponse({'detail':'Yêu cầu khác nguồn bị từ chối.'}, status_code=403)
     response = await call_next(request)
     response.headers['X-Content-Type-Options'] = 'nosniff'
-    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
-    response.headers['X-Frame-Options'] = 'SAMEORIGIN' if request.url.path=='/advanced' else 'DENY'
+    response.headers['Referrer-Policy'] = 'no-referrer'
+    # Both /advanced and /integrations are embedded by the parent app.
+    response.headers['X-Frame-Options'] = 'SAMEORIGIN'
     response.headers['Content-Security-Policy'] = "default-src 'self'; img-src 'self' data: https://img.vietqr.io; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'self'; base-uri 'self'; form-action 'self'"
-    if request.url.path.startswith('/api/'):
+    response.headers['Permissions-Policy'] = 'camera=(), microphone=(), geolocation=(), payment=()'
+    response.headers['Cross-Origin-Resource-Policy'] = 'same-origin'
+    response.headers['X-Permitted-Cross-Domain-Policies'] = 'none'
+    if PUBLIC_MODE:
+        response.headers['Strict-Transport-Security'] = 'max-age=31536000'
+    if request.url.path.startswith('/api/') or request.url.path in ('/','/advanced','/integrations'):
         response.headers['Cache-Control'] = 'no-store'
     return response
 
@@ -122,26 +157,34 @@ def enum(v, field, allowed):
     return s
 
 
-def password_hash(password):
-    salt = secrets.token_bytes(16)
-    dk = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 330000)
-    return 'pbkdf2_sha256$330000$'+salt.hex()+'$'+dk.hex()
+PASSWORD_HASHER = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=2,
+                                 hash_len=32, salt_len=16)
+# An argon2id dummy record is used for non-existent accounts to reduce timing leakage.
+DUMMY_PASSWORD_HASH = PASSWORD_HASHER.hash('dummy-never-an-account-password')
 
+def password_hash(password):
+    return PASSWORD_HASHER.hash(password)
 
 def check_password(password, stored):
     try:
+        if stored.startswith('$argon2id$'):
+            return PASSWORD_HASHER.verify(stored,password)
         alg, iterations, salt, digest = stored.split('$')
         if alg != 'pbkdf2_sha256':
             return False
-        dk = hashlib.pbkdf2_hmac('sha256', password.encode(), bytes.fromhex(salt), int(iterations))
-        return hmac.compare_digest(dk, bytes.fromhex(digest))
-    except Exception:
+        count=int(iterations)
+        if count < 100000 or count>1_000_000:
+            return False
+        dk=hashlib.pbkdf2_hmac('sha256',password.encode(),bytes.fromhex(salt),count)
+        return hmac.compare_digest(dk,bytes.fromhex(digest))
+    except (VerifyMismatchError,VerificationError,ValueError,TypeError):
         return False
 
 
 def strong_password(p):
-    if not isinstance(p, str) or len(p)<10 or len(p)>128:
-        fail('Mật khẩu cần từ 10 đến 128 ký tự.')
+    minimum=15 if PUBLIC_MODE else 10
+    if not isinstance(p,str) or len(p)<minimum or len(p)>128:
+        fail(f'Mật khẩu cần từ {minimum} đến 128 ký tự.')
 
 
 def audit(con, user, action, entity, ident=None, details=''):
@@ -172,6 +215,10 @@ def legacy_scope_check(con,request,user,body):
     method=request.method
     if path.startswith('/api/auth/'):
         return  # Any authenticated user may log out/change their own password.
+    if path.startswith('/api/tenant/admin/'):
+        return  # Tenant review endpoints validate property scope themselves.
+    if path.startswith('/api/v8/tickets'):
+        return  # V8 explicitly enforces room/property scope.
     if path.startswith('/api/v2/'):
         return  # V2 endpoints apply their own property and capability checks.
     if method in ('GET','HEAD'):
@@ -205,9 +252,13 @@ def legacy_scope_check(con,request,user,body):
             if not source or source['property_id'] not in grants:
                 fail('Chỉ số không thuộc cơ sở được phân quyền.',403)
             rid=rid or original['room_id']
-        if not rid and len(parts)>2 and parts[2].isdigit() and entity=='tickets':
-            found=one(con,'SELECT room_id FROM tickets WHERE id=?',(int(parts[2]),))
-            rid=found['room_id'] if found else None
+        if len(parts)>2 and parts[2].isdigit() and entity=='tickets':
+            original=one(con,'SELECT room_id FROM tickets WHERE id=?',(int(parts[2]),))
+            if not original:fail('Không tìm thấy yêu cầu.',404)
+            source=one(con,'SELECT property_id FROM rooms WHERE id=?',(original['room_id'],))
+            if not source or source['property_id'] not in grants:
+                fail('Yêu cầu sửa chữa không thuộc cơ sở được phân quyền.',403)
+            rid=rid or original['room_id']
         if rid:
             found=one(con,'SELECT property_id FROM rooms WHERE id=?',(rid,))
             property_id=found['property_id'] if found else None
@@ -255,10 +306,15 @@ async def authorized(request: Request):
         if not user or not user['active']:fail('Phiên đăng nhập hết hạn.',401)
         user['grant_ids']=[r['property_id'] for r in rows(con,
               'SELECT property_id FROM property_grants WHERE user_id=?',(user['id'],))]
+        # The legacy app treated an empty scope as all properties; fail closed online.
+        if PUBLIC_MODE and user['role']!='admin' and not user['grant_ids'] and not request.url.path.startswith('/api/auth/'):
+            fail('Nhân viên chưa được gán cơ sở. Liên hệ quản trị viên.',403)
         from .permissions import effective, route_permission
         user['permissions']=effective(con,user)
+        if PUBLIC_MODE and user['role']!='admin' and not user['grant_ids']:
+            user['permissions']={name:False for name in user['permissions']}
         capability=route_permission(request.url.path,request.method)
-        if user['role']!='admin' and request.url.path.startswith('/api/'):
+        if user['role']!='admin' and request.url.path.startswith('/api/') and not request.url.path.startswith('/api/auth/'):
             if capability is None or not user['permissions'].get(capability,False):
                 fail('Tài khoản chưa được cấp quyền: '+str(capability or 'API'),403)
         if request.method in ('POST','PUT','PATCH','DELETE'):
@@ -322,10 +378,12 @@ def health():
 @app.get('/api/auth/status')
 def status():
     with connect() as con:
-        return {'initialized': bool(con.execute('SELECT 1 FROM users LIMIT 1').fetchone())}
+        return {'initialized': bool(con.execute('SELECT 1 FROM users LIMIT 1').fetchone()),'setup_via_cli':PUBLIC_MODE}
 
 @app.post('/api/auth/setup')
 def setup(data: dict, response: Response):
+    if PUBLIC_MODE:
+        fail('Chế độ Internet: khởi tạo Admin bằng lệnh CLI trên server.',403)
     username = trim(data.get('username'), 'tên đăng nhập', 40, True)
     fullname = trim(data.get('full_name'), 'họ tên', 100, True)
     pw = data.get('password','')
@@ -360,18 +418,31 @@ def make_session(uid,response):
 @app.post('/api/auth/login')
 def login(data: dict, request: Request,response: Response):
     ip = request.client.host if request.client else 'unknown'
-    now = time.monotonic()
-    LOGIN_ATTEMPTS[ip] = [x for x in LOGIN_ATTEMPTS[ip] if now-x < 900]
-    if len(LOGIN_ATTEMPTS[ip]) >= 15:
-        fail('Đăng nhập quá nhiều lần. Thử lại sau 15 phút.',429)
-    uname = trim(data.get('username'), 'tên đăng nhập',40)
+    uname = trim(data.get('username'), 'tên đăng nhập',40).lower()
     pw = str(data.get('password',''))
-    with connect() as con:
-        record = one(con,'SELECT * FROM users WHERE username=?',(uname,))
-    if not record or not record['active'] or not check_password(pw,record['password_hash']):
-        LOGIN_ATTEMPTS[ip].append(now)
+    if len(pw)>512:
         fail('Tên đăng nhập hoặc mật khẩu không đúng.',401)
-    LOGIN_ATTEMPTS.pop(ip,None)
+    now = int(time.time())
+    ip_key=hashlib.sha256(ip.encode()).hexdigest()
+    user_key=hashlib.sha256(uname.encode()).hexdigest()
+    with tx() as con:
+        con.execute('DELETE FROM auth_failures WHERE at < ?', (now-LOGIN_WINDOW_SECONDS,))
+        ip_count=one(con,'SELECT COUNT(*) n FROM auth_failures WHERE ip_hash=?',(ip_key,))['n']
+        username_count=one(con,'SELECT COUNT(*) n FROM auth_failures WHERE username_hash=?',(user_key,))['n']
+    if ip_count>=LOGIN_IP_LIMIT or username_count>=LOGIN_USERNAME_LIMIT:
+        fail('Đăng nhập quá nhiều lần. Thử lại sau 15 phút.',429)
+    with connect() as con:
+        record=one(con,'SELECT * FROM users WHERE username=?',(uname,))
+    # Match the duration of PBKDF2 verification for unknown accounts too.
+    valid=check_password(pw,record['password_hash'] if record and record['active'] else DUMMY_PASSWORD_HASH)
+    if not record or not record['active'] or not valid:
+        with tx() as con:
+            con.execute('INSERT INTO auth_failures(ip_hash,username_hash,at) VALUES(?,?,?)',(ip_key,user_key,now))
+        fail('Tên đăng nhập hoặc mật khẩu không đúng.',401)
+    with tx() as con:
+        con.execute('DELETE FROM auth_failures WHERE username_hash=? AND ip_hash=?',(user_key,ip_key))
+        if not record['password_hash'].startswith('$argon2id$') or PASSWORD_HASHER.check_needs_rehash(record['password_hash']):
+            con.execute('UPDATE users SET password_hash=? WHERE id=?',(password_hash(pw),record['id']))
     return make_session(record['id'],response)
 
 @app.get('/api/auth/me')
@@ -504,7 +575,7 @@ def delete_room(ident:int,user=Depends(authorized)):
         integrity(exc)
     return json_ok()
 
-TENANT_SQL = '''SELECT t.*, COUNT(DISTINCT CASE WHEN c.status='active' THEN c.id END) active_contracts,
+TENANT_SQL = '''SELECT t.*, (SELECT a.enabled FROM tenant_portal_accounts a WHERE a.tenant_id=t.id) portal_enabled, (SELECT a.property_id FROM tenant_portal_accounts a WHERE a.tenant_id=t.id) portal_property_id, COUNT(DISTINCT CASE WHEN c.status='active' THEN c.id END) active_contracts,
                 GROUP_CONCAT(DISTINCT CASE WHEN c.status='active' THEN r.code END) room_codes
                 FROM tenants t LEFT JOIN contracts c ON c.tenant_id=t.id
                 LEFT JOIN rooms r ON r.id=c.room_id GROUP BY t.id'''
@@ -525,15 +596,29 @@ def tenant_values(data, creating=False):
 def add_tenant(data:dict,user=Depends(authorized)):
     with tx() as con:
         ident=insert(con,'tenants',tenant_values(data,creating=True))
+        creds=None
+        if data.get('portal_enabled'):
+            if user['role']!='admin':fail('Chỉ Admin có thể cấp tài khoản khách thuê.',403)
+            from .tenant_portal import provision
+            creds=provision(con,ident,int(data.get('portal_property_id') or 0),True,user)
         audit(con,user,'create','tenant',ident)
-    return json_ok(id=ident)
+    return json_ok(id=ident,portal_credentials=creds)
 
 @app.put('/api/tenants/{ident}')
 def edit_tenant(ident:int,data:dict,user=Depends(authorized)):
     with tx() as con:
         update(con,'tenants',ident,tenant_values(data))
+        creds=None
+        if 'portal_enabled' in data:
+            if user['role']!='admin':fail('Chỉ Admin có thể cấu hình tài khoản khách thuê.',403)
+            from .tenant_portal import provision
+            if data.get('portal_enabled'):
+                creds=provision(con,ident,int(data.get('portal_property_id') or 0),True,user)
+            else:
+                old=one(con,'SELECT * FROM tenant_portal_accounts WHERE tenant_id=?',(ident,))
+                if old:provision(con,ident,old['property_id'],False,user)
         audit(con,user,'update','tenant',ident)
-    return json_ok()
+    return json_ok(portal_credentials=creds)
 
 @app.delete('/api/tenants/{ident}')
 def delete_tenant(ident:int,user=Depends(authorized)):
@@ -941,6 +1026,8 @@ def edit_ticket(ident:int,data:dict,user=Depends(authorized)):
     with tx() as con:
         old=one(con,'SELECT * FROM tickets WHERE id=?',(ident,))
         if not old: fail('Không tìm thấy sự cố.',404)
+        if old.get('reported_by_tenant_id') and vals['room_id']!=old['room_id']:
+            fail('Không thể thay đổi phòng của yêu cầu do khách thuê gửi.',409)
         vals['resolved_at']=(old['resolved_at'] or date.today().isoformat()) if vals['status']=='done' else None
         update(con,'tickets',ident,vals)
         audit(con,user,'update','ticket',ident)
@@ -948,10 +1035,14 @@ def edit_ticket(ident:int,data:dict,user=Depends(authorized)):
 
 @app.delete('/api/tickets/{ident}')
 def delete_ticket(ident:int,user=Depends(authorized)):
+    from . import tenant_portal
     with tx() as con:
+        attachments=rows(con,'SELECT file_name FROM ticket_photos WHERE ticket_id=?',(ident,))
+        con.execute("UPDATE zalo_outbox SET status='failed',error='Yêu cầu đã được xóa' WHERE ticket_id=? AND status='pending'",(ident,))
         cur=con.execute('DELETE FROM tickets WHERE id=?',(ident,))
         if not cur.rowcount: fail('Không tìm thấy sự cố.',404)
         audit(con,user,'delete','ticket',ident)
+    for a in attachments:(tenant_portal.UPLOADS/a['file_name']).unlink(missing_ok=True)
     return json_ok()
 
 def rent_advance_cash(con,period,property_ids=None):
@@ -1203,3 +1294,10 @@ app.include_router(utility_router)
 
 from .notify import router as notify_router
 app.include_router(notify_router)
+
+# Isolated tenant session and owner portal. Tenant routes never depend on staff sessions.
+from .tenant_portal import router as tenant_portal_router
+app.include_router(tenant_portal_router)
+
+from .repairs import router as repairs_router
+app.include_router(repairs_router)

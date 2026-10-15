@@ -47,7 +47,7 @@ class V6Tests(unittest.TestCase):
    con.execute('PRAGMA user_version=5')
   db.init_db()
   with db.connect() as con:
-   self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],6)
+   self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],8)
    self.assertEqual(con.execute('PRAGMA integrity_check').fetchone()[0],'ok')
    self.assertEqual(con.execute('SELECT COUNT(*) FROM rooms').fetchone()[0],1)
    self.assertEqual(con.execute('SELECT account_number FROM bank_accounts').fetchone()[0],'123456789')

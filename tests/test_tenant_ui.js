@@ -1,0 +1,12 @@
+'use strict';
+const vm=require('vm'),fs=require('fs'),path=require('path');
+const src=fs.readFileSync(path.join(__dirname,'../app/static/app.js'),'utf8').replace(/\binit\(\);\s*$/,'');
+const ctx={console,document:{addEventListener(){}},window:{},setTimeout(){},URLSearchParams,Date,Number,String,Math,Array};
+vm.createContext(ctx);vm.runInContext(src,ctx);
+const result=vm.runInContext(`state.user={id:1,role:'admin',permissions:{}};state.data={properties:[{id:1,name:'Ngõ 303'}],tenantApprovals:[{id:1,room_code:'P01',property_name:'Ngõ 303',tenant_name:'Trang',phone:'0982986102',period:'2026-10',electric_old:100,electric_new:120,water_old:10,water_new:13,status:'pending'}]};
+({a:tenantPortalPanel({id:1,portal_enabled:1,portal_property_id:1}),b:pageTenantApprovals(),c:pageSettings(),d:renderShell.toString().includes('tenantApprovals')})`,ctx);
+if(!result.a.includes('portal_enabled')||!result.a.includes('Ngõ 303')||!result.b.includes('Duyệt')||!result.b.includes('P01')||!result.c.includes('owner-settings')||!result.d)throw Error('Admin portal UI regression');
+const tenant=fs.readFileSync(path.join(__dirname,'../app/static/tenant.js'),'utf8');
+if(tenant.includes('/api/tenants')||tenant.includes('/api/users'))throw Error('Tenant frontend references staff endpoint');
+if(!tenant.includes('/api/tenant/home')||!tenant.includes('/api/tenant/readings/submit'))throw Error('Tenant portal endpoints missing');
+console.log('Tenant admin form, review, settings and tenant frontend: OK');

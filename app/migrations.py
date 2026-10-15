@@ -267,3 +267,79 @@ def migrate_v6(con, db_path, existed_before_init=True):
     except Exception:
         con.rollback()
         raise
+
+
+def migrate_v7(con, db_path, existed_before_init=True):
+    """Non-destructive tenant portal schema. Never create weak credentials for old tenants."""
+    version=con.execute('PRAGMA user_version').fetchone()[0]
+    if version>=7:return
+    if existed_before_init:_backup_before_upgrade(con,db_path,tag='v7')
+    con.execute('BEGIN IMMEDIATE')
+    try:
+        con.execute("""CREATE TABLE IF NOT EXISTS tenant_portal_accounts (
+          tenant_id INTEGER PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
+          property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE RESTRICT,
+          username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL,
+          access_code_hash TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0,1)),
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
+        con.execute("""CREATE TABLE IF NOT EXISTS tenant_portal_sessions (
+          token_hash TEXT PRIMARY KEY,tenant_id INTEGER NOT NULL REFERENCES tenant_portal_accounts(tenant_id) ON DELETE CASCADE,
+          csrf_token TEXT NOT NULL,expires_at TEXT NOT NULL)""")
+        con.execute("""CREATE TABLE IF NOT EXISTS tenant_meter_submissions (
+          id INTEGER PRIMARY KEY,tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+          property_id INTEGER NOT NULL REFERENCES properties(id),
+          contract_id INTEGER NOT NULL REFERENCES contracts(id), room_id INTEGER NOT NULL REFERENCES rooms(id),
+          period TEXT NOT NULL,electric_old REAL NOT NULL,electric_new REAL NOT NULL,
+          water_old REAL NOT NULL,water_new REAL NOT NULL,
+          electric_photo TEXT NOT NULL,water_photo TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
+          feedback TEXT NOT NULL DEFAULT '',reviewed_by INTEGER REFERENCES users(id),reviewed_at TEXT,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE(contract_id,period))""")
+        con.execute('CREATE INDEX IF NOT EXISTS idx_tenant_meter_status ON tenant_meter_submissions(status,property_id)')
+        con.execute("""CREATE TABLE IF NOT EXISTS owner_profiles (
+          property_id INTEGER PRIMARY KEY REFERENCES properties(id) ON DELETE CASCADE,
+          name TEXT NOT NULL DEFAULT '',gender TEXT NOT NULL DEFAULT '',age INTEGER,
+          photo_path TEXT,address TEXT NOT NULL DEFAULT '',phone TEXT NOT NULL DEFAULT '',email TEXT NOT NULL DEFAULT '',
+          show_name INTEGER NOT NULL DEFAULT 1,show_gender INTEGER NOT NULL DEFAULT 0,
+          show_age INTEGER NOT NULL DEFAULT 0,show_photo INTEGER NOT NULL DEFAULT 0,
+          show_address INTEGER NOT NULL DEFAULT 0,show_phone INTEGER NOT NULL DEFAULT 1,
+          show_email INTEGER NOT NULL DEFAULT 0)""")
+        con.execute('PRAGMA user_version=7')
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+
+
+def migrate_v8(con, db_path, existed_before_init=True):
+    """Tenant repair requests, private images and Zalo album delivery; additive migration."""
+    if con.execute('PRAGMA user_version').fetchone()[0] >= 8:
+        return
+    if existed_before_init:
+        _backup_before_upgrade(con, db_path, tag='v8')
+    con.execute('BEGIN IMMEDIATE')
+    try:
+        ticket_cols={r[1] for r in con.execute('PRAGMA table_info(tickets)')}
+        for name, definition in {'reported_by_tenant_id':'INTEGER REFERENCES tenants(id)',
+                                 'reported_contract_id':'INTEGER REFERENCES contracts(id)'}.items():
+            if name not in ticket_cols:
+                con.execute(f'ALTER TABLE tickets ADD COLUMN {name} {definition}')
+        con.execute('''CREATE TABLE IF NOT EXISTS ticket_photos (
+          id INTEGER PRIMARY KEY,ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+          file_name TEXT NOT NULL UNIQUE,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)''')
+        con.execute('CREATE INDEX IF NOT EXISTS idx_ticket_photos_ticket ON ticket_photos(ticket_id)')
+        con.execute('''CREATE TABLE IF NOT EXISTS ticket_media_tokens (
+          token TEXT PRIMARY KEY,photo_id INTEGER NOT NULL REFERENCES ticket_photos(id) ON DELETE CASCADE,
+          expires_at TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)''')
+        for table,column in [('zalo_config','ticket_enabled'),('zalo_destinations','on_ticket')]:
+            cols={r[1] for r in con.execute(f'PRAGMA table_info({table})')}
+            if column not in cols:
+                con.execute(f'ALTER TABLE {table} ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0')
+        cols={r[1] for r in con.execute('PRAGMA table_info(zalo_outbox)')}
+        if 'ticket_id' not in cols:
+            con.execute('ALTER TABLE zalo_outbox ADD COLUMN ticket_id INTEGER REFERENCES tickets(id) ON DELETE SET NULL')
+        con.execute('PRAGMA user_version=8')
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise

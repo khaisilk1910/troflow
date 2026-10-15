@@ -91,3 +91,13 @@ svg{flex-shrink:0}.icon{width:18px;height:18px;stroke:currentColor;stroke-width:
  #print-root .invoice-bank-info div{overflow-wrap:anywhere}
 }
 @media(max-width:600px){.invoice-head{gap:9px}.modal-footer{flex-wrap:wrap}}
+
+/* Tenant portal provisioning and owner privacy toggles */
+.portal-admin-box{border:1px solid #bde8df;background:#f1faf8;border-radius:12px;padding:18px;margin-top:20px}.portal-admin-box h3{margin:0 0 12px;font-size:15px}.portal-admin-box>label{display:block;margin:11px 0 5px}.portal-admin-box select{width:100%;padding:11px;border:1px solid #cbdde3;border-radius:10px;background:white}.portal-toggle{display:flex!important;align-items:center;gap:8px;line-height:1.4;cursor:pointer}.portal-toggle input{width:17px!important;height:17px!important;flex-shrink:0}.owner-fields .field{margin:10px 0}.owner-fields .portal-toggle{margin-top:9px;font-weight:normal;font-size:12px;color:#426574}.owner-fields .field>input{width:100%}.portal-admin-box .btn{margin-top:10px}
+
+/* Maintenance ticket attachments */
+.ticket-photo-form{margin-top:18px;padding:15px;background:#f4f9fa;border:1px solid #dce8e9;border-radius:12px}
+.ticket-photo-form input[type=file]{width:100%;margin:10px 0}
+.ticket-photo-preview{display:flex;flex-wrap:wrap;gap:12px;margin-top:12px}
+.ticket-photo-item{display:grid;gap:6px;min-width:105px;max-width:160px;font-size:12px;overflow-wrap:anywhere}
+.ticket-photo-item img{width:128px;height:104px;max-width:100%;object-fit:cover;border-radius:10px;border:1px solid #dce7ef}

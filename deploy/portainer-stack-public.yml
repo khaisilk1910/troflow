@@ -1,0 +1,52 @@
+# INTERNET MODE: configure TROFLOW_DOMAIN and pre-create /opt/troflow/secrets/integration.key
+# Keep TrọFlow private behind a TLS terminating reverse proxy on the host.
+services:
+  troflow:
+    image: ${TROFLOW_IMAGE:-ghcr.io/khaisilk1910/troflow:latest}
+    container_name: troflow
+    user: "10001:10001"
+    init: true
+    restart: unless-stopped
+    # Avoid writing short-lived Zalo invoice image capability tokens into access logs.
+    command: ["uvicorn","app.main:app","--host","0.0.0.0","--port","8000","--no-access-log"]
+    ports:
+      - "127.0.0.1:${PORT:-8088}:8000"
+    environment:
+      TZ: Asia/Ho_Chi_Minh
+      DATABASE_PATH: /app/data/troflow.db
+      BACKUP_DIRECTORY: /app/backups
+      UPLOAD_DIRECTORY: /app/uploads
+      BACKUP_KEEP: "${BACKUP_KEEP:-14}"
+      TROFLOW_SCHEDULER: "1"
+      TROFLOW_PUBLIC_MODE: "1"
+      TROFLOW_ALLOWED_HOSTS: "${TROFLOW_DOMAIN:?Provide TROFLOW_DOMAIN}"
+      COOKIE_SECURE: "1"
+      TROFLOW_SECRET_KEY_FILE: /run/secrets/troflow_integration_key
+    volumes:
+      - /opt/troflow/data:/app/data
+      - /opt/troflow/backups:/app/backups
+      - /opt/troflow/uploads:/app/uploads
+      - /opt/troflow/secrets/integration.key:/run/secrets/troflow_integration_key:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=128m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 768m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health',timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    stop_grace_period: 30s

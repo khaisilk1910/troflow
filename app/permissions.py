@@ -6,7 +6,7 @@ from .db import rows
 GROUPS = [
  ('dashboard','Tổng quan',['view']),('properties','Cơ sở',['view','create','edit','delete']),
  ('utilitymeters','Công tơ & điện nước tổng',['view','create','edit','delete','record','deletebill','report']),
- ('rooms','Phòng trọ',['view','create','edit','delete']),('tenants','Người thuê',['view','create','edit','delete']),
+ ('rooms','Phòng trọ',['view','create','edit','delete']),('tenants','Người thuê',['view','create','edit','delete','idphotos']),
  ('contracts','Hợp đồng',['view','create','edit','delete','end','proration']),
  ('readings','Điện nước',['view','record','edit','delete','batch','photos']),
  ('invoices','Hóa đơn',['view','preview','create','edit','publish','delete','pdf','vietqr']),
@@ -31,7 +31,7 @@ ACTIONS={'view':'Xem','create':'Thêm','edit':'Sửa','delete':'Xóa','record':'
          'batch':'Ghi hàng loạt','photos':'Ảnh công tơ','publish':'Duyệt chốt','preview':'Xem trước',
          'pdf':'Xuất PDF','vietqr':'VietQR','end':'Kết thúc','proration':'Tính ngày',
          'deletebill':'Xóa kỳ','report':'Thống kê lãi lỗ','refund':'Hoàn / hủy','leave':'Báo rời','assign':'Gán dịch vụ','remove':'Ngừng dịch vụ',
-         'execute':'Thực hiện','upload':'Tải lên','verify':'Kiểm tra','restore':'Phục hồi'}
+         'execute':'Thực hiện','upload':'Tải lên','idphotos':'Xem/sửa ảnh CCCD','verify':'Kiểm tra','restore':'Phục hồi'}
 ADMIN_ONLY={'users','access','backups','bank','zalo','audit'}
 ADMIN_RESERVED={'properties.create','properties.delete'}
 ALL_KEYS={f'{group}.{action}' for group,_,actions in GROUPS for action in actions}
@@ -57,6 +57,8 @@ def defaults(job):
         for action in actions:
             permitted[f'{group}.{action}']=(group not in ADMIN_ONLY and group in ROLE_MODULES.get(job,set()) and (action=='view' or group in ROLE_WRITE.get(job,set())))
     for key in ADMIN_RESERVED:permitted[key]=False
+    # Staff cannot view identity-document scans unless an admin opts in explicitly.
+    permitted['tenants.idphotos']=False
     # Restrict destructive operations by default; admin must grant explicitly.
     for key in list(permitted):
         if key.endswith('.delete') or key in ('prepayments.refund','payments.edit'):
@@ -104,6 +106,9 @@ def route_permission(path,method):
         if mod=='properties' and 'bank' in p:return 'bank.edit'
         if mod=='prepayments':return 'prepayments.view' if method=='GET' else ('prepayments.refund' if 'refund' in p else 'prepayments.record')
         return None
+    if mod=='tenant' and len(p)>2 and p[1]=='admin':
+        if p[2]=='submissions':return 'readings.record' if method!='GET' else 'readings.view'
+        return None
     if mod=='v6':
         if len(p)<2:return None
         section=p[1]
@@ -118,6 +123,9 @@ def route_permission(path,method):
         if method=='GET':return 'utilitymeters.view'
         return 'utilitymeters.deletebill' if method=='DELETE' else 'utilitymeters.record'
     if mod=='utility-report':return 'utilitymeters.report'
+    if mod=='v8' and len(p)>1 and p[1]=='tickets':
+        if method=='GET':return 'tickets.view'
+        return 'tickets.edit' if (method=='DELETE' and 'photos' in p) or method=='PUT' else 'tickets.delete' if method=='DELETE' else 'tickets.create'
     if mod=='dashboard':return 'dashboard.view'
     if mod=='reports':return 'reports.view'
     if mod=='export':return 'export.execute'

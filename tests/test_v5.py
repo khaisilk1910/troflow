@@ -39,7 +39,7 @@ class V5Tests(unittest.TestCase):
    con.execute('PRAGMA user_version=4')
   db.init_db()
   with db.connect() as con:
-   self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],6)
+   self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],8)
    self.assertEqual(con.execute("SELECT id_number FROM tenants WHERE full_name='Hồ sơ cũ'").fetchone()[0],'')
    self.assertIn('id_back_path',{x[1] for x in con.execute('PRAGMA table_info(tenants)')})
    self.assertEqual(con.execute('PRAGMA integrity_check').fetchone()[0],'ok')
