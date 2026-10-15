@@ -116,13 +116,15 @@ def connect():
 
 
 def init_db():
-    from .migrations import migrate, restore_pending
+    from .migrations import migrate, migrate_v6, restore_pending
     existing = DB_PATH.exists()
     restore_pending(DB_PATH)
     with connect() as con:
         con.execute('PRAGMA journal_mode=WAL')
         con.executescript(SCHEMA)
+        version_before = con.execute('PRAGMA user_version').fetchone()[0]
         migrate(con, DB_PATH, existing)
+        migrate_v6(con, DB_PATH, existing and version_before >= 5)
 
 
 @contextmanager

@@ -25,6 +25,10 @@ from .db import init_db, connect, tx, one, rows, DB_PATH
 @asynccontextmanager
 async def lifespan(app):
     init_db()
+    # Never blindly resend a message potentially delivered just before a crash.
+    with tx() as con:
+        con.execute("UPDATE zalo_outbox SET status='failed', error='Tiến trình gián đoạn; kiểm tra bên Zalo trước khi gửi lại.' WHERE status='sending'")
+        con.execute("DELETE FROM notification_media WHERE expires_at < ?",(datetime.now(timezone.utc).isoformat(),))
     from .scheduler import start, stop
     start()
     try:
@@ -743,11 +747,12 @@ def prev_reading(room_id:int,period:str,user=Depends(authorized)):
                         WHERE room_id=? AND period<? ORDER BY period DESC LIMIT 1''',(room_id,period))
     return rec or {'electric_new':0,'water_new':0,'period':None}
 
-INVOICE_SQL = '''SELECT i.*,c.tenant_id,t.full_name tenant_name,t.phone tenant_phone,
+INVOICE_SQL = '''SELECT i.*,rd.electric_old,rd.electric_new,rd.water_old,rd.water_new,c.tenant_id,t.full_name tenant_name,t.phone tenant_phone,
                  r.code room_code,r.property_id,p.name property_name,p.address property_address,t.id_number tenant_id_number,t.photo_path tenant_photo_path,
                  COALESCE((SELECT SUM(amount) FROM payments WHERE invoice_id=i.id),0) paid,
                  i.total-COALESCE((SELECT SUM(amount) FROM payments WHERE invoice_id=i.id),0) balance
-                 FROM invoices i JOIN contracts c ON c.id=i.contract_id
+                 FROM invoices i LEFT JOIN readings rd ON rd.room_id=i.room_id AND rd.period=i.period
+                 JOIN contracts c ON c.id=i.contract_id
                  JOIN tenants t ON t.id=c.tenant_id JOIN rooms r ON r.id=i.room_id
                  JOIN properties p ON p.id=r.property_id'''
 @app.get('/api/invoices')
@@ -787,6 +792,8 @@ def generate(data:dict,user=Depends(authorized)):
             if ident:
                 ids.append(ident)
                 audit(con,user,'create','invoice',ident,period)
+                from .notify import enqueue_invoice_event
+                enqueue_invoice_event(con,ident,'invoice')
     return json_ok(created=len(ids),ids=ids)
 
 @app.delete('/api/invoices/{ident}')
@@ -827,6 +834,8 @@ def add_payment(data:dict,user=Depends(authorized)):
         if amount>inv['total']-inv['paid']: fail('Số tiền thu vượt quá số dư hóa đơn.')
         ident=insert(con,'payments',dict(invoice_id=invoice_id,amount=amount,paid_at=paid_at,method=method,note=note))
         audit(con,user,'create','payment',ident)
+        from .notify import enqueue_invoice_event
+        enqueue_invoice_event(con,invoice_id,'payment')
     return json_ok(id=ident)
 
 @app.put('/api/payments/{ident}')
@@ -1172,6 +1181,10 @@ def backup(user=Depends(admin_user)):
            headers={'Content-Disposition':f'attachment; filename="troflow-backup-{date.today().isoformat()}.sqlite3"',
                     'Cache-Control':'no-store'})
 
+@app.get('/integrations')
+def integration_page():
+    return FileResponse(STATIC/'integrations.html',headers={'Cache-Control':'no-cache'})
+
 @app.get('/')
 def root():
     return FileResponse(STATIC/'index.html',headers={'Cache-Control':'no-cache'})
@@ -1187,3 +1200,6 @@ app.include_router(prepayments_router)
 
 from .utility import router as utility_router
 app.include_router(utility_router)
+
+from .notify import router as notify_router
+app.include_router(notify_router)

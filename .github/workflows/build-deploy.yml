@@ -34,7 +34,9 @@ jobs:
         run: |
           node --check app/static/app.js
           node --check app/static/advanced.js
+          node --check app/static/integrations.js
           node tests/js_smoke.js
+          node tests/test_invoice_print.js
 
   publish:
     name: Build image and optionally trigger Portainer

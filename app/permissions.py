@@ -23,7 +23,8 @@ GROUPS = [
  ('users','Tài khoản (Admin)',['view','create','edit']),
  ('access','Phân quyền (Admin)',['view','edit']),
  ('backups','Sao lưu / phục hồi (Admin)',['view','create','verify','restore','edit']),
- ('bank','Tài khoản ngân hàng (Admin)',['view','edit']),
+ ('bank','Tài khoản ngân hàng (Admin)',['view','edit','create','delete']),
+ ('zalo','Thông báo Zalo (Admin)',['view','edit','create','delete','send']),
  ('audit','Nhật ký hệ thống (Admin)',['view'])
 ]
 ACTIONS={'view':'Xem','create':'Thêm','edit':'Sửa','delete':'Xóa','record':'Ghi nhận',
@@ -31,7 +32,7 @@ ACTIONS={'view':'Xem','create':'Thêm','edit':'Sửa','delete':'Xóa','record':'
          'pdf':'Xuất PDF','vietqr':'VietQR','end':'Kết thúc','proration':'Tính ngày',
          'deletebill':'Xóa kỳ','report':'Thống kê lãi lỗ','refund':'Hoàn / hủy','leave':'Báo rời','assign':'Gán dịch vụ','remove':'Ngừng dịch vụ',
          'execute':'Thực hiện','upload':'Tải lên','verify':'Kiểm tra','restore':'Phục hồi'}
-ADMIN_ONLY={'users','access','backups','bank','audit'}
+ADMIN_ONLY={'users','access','backups','bank','zalo','audit'}
 ADMIN_RESERVED={'properties.create','properties.delete'}
 ALL_KEYS={f'{group}.{action}' for group,_,actions in GROUPS for action in actions}
 ROLE_MODULES={
@@ -102,6 +103,13 @@ def route_permission(path,method):
         if mod=='schedules':return 'schedules.view' if method=='GET' else ('schedules.execute' if 'run' in p else 'schedules.edit')
         if mod=='properties' and 'bank' in p:return 'bank.edit'
         if mod=='prepayments':return 'prepayments.view' if method=='GET' else ('prepayments.refund' if 'refund' in p else 'prepayments.record')
+        return None
+    if mod=='v6':
+        if len(p)<2:return None
+        section=p[1]
+        if section=='banks':return 'bank.view' if method=='GET' else 'bank.create' if method=='POST' else 'bank.delete' if method=='DELETE' else 'bank.edit'
+        if section=='invoices':return 'invoices.view'
+        if section=='zalo':return 'zalo.view' if method=='GET' else 'zalo.send' if ('send' in p or 'retry' in p) else 'zalo.create' if method=='POST' else 'zalo.delete' if method=='DELETE' else 'zalo.edit'
         return None
     if mod=='utility-meters':
         if method=='GET':return 'utilitymeters.view'

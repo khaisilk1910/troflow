@@ -1,3 +1,5 @@
+> **Cập nhật V5.1 (mẫu hóa đơn chi tiết và in A4):** xem [README-V5.1.md](README-V5.1.md). Không thay đổi database.
+
 # TrọFlow 5.0
 
 **Hướng dẫn nâng cấp V5:** xem [README-V5.md](README-V5.md). Dự án giữ đầy đủ tính năng V1–V4 và hỗ trợ Docker/Portainer/GitHub Actions.
@@ -146,3 +148,7 @@ TrọFlow 1.0 là **ứng dụng vận hành nhà trọ cỡ nhỏ-vừa**, khô
 - [OWASP – Session Management](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)
 
 TrọFlow là mã nguồn trong gói zip này; không có phụ thuộc vào dịch vụ đám mây của bên thứ ba.
+
+## Tính năng TrọFlow 5.2
+
+Tích hợp Zalo Bot Server cùng máy Ubuntu, quản lý nhiều tài khoản ngân hàng, VietQR trên hóa đơn, chỉ số điện nước cũ/mới ở chi tiết và bản in. Xem [README-V5.2.md](README-V5.2.md) để cấu hình và yêu cầu bảo mật.

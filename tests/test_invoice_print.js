@@ -1,0 +1,41 @@
+const assert = require('node:assert/strict');
+const vm = require('vm');
+const fs = require('fs');
+const path = require('path');
+const source=fs.readFileSync(path.join(__dirname,'../app/static/app.js'),'utf8').replace(/\binit\(\);\s*$/,'');
+const printRoot={innerHTML:''};
+const context={console,document:{querySelector(q){return q==='#print-root'?printRoot:null},addEventListener(){}},window:{},setTimeout(){},URLSearchParams,Date,Number,String,Math,Array};
+vm.createContext(context);
+vm.runInContext(source,context,{timeout:2000});
+const invoice={id:51,property_name:'Ngõ 303 · Tòa B',property_address:'Số 31, Đường Xuân Phương, Hà Nội',tenant_name:'Trang',tenant_phone:'0900000000',room_code:'P01',period:'2026-10',due_date:'2026-11-05',rent:3000000,electric_usage:277,electricity:1108000,water_usage:8,water:160000,services:0,adjustment:0,total:4268000,paid:0,balance:4268000,note:''};
+context.invoice=invoice;
+const result=vm.runInContext('renderInvoicePaper(invoice)',context);
+assert(result.includes('PHIẾU THU / HÓA ĐƠN NỘI BỘ'));
+assert(!result.includes('TRỌFLOW • PHIẾU THU'));
+assert(result.includes('Khách thuê: <strong>Trang</strong>'));
+assert(result.includes('Phòng: <strong>P01</strong>'));
+assert(result.includes('Số điện thoại: <strong>0900000000</strong>'));
+assert(result.includes('invoice-sum-balance'));
+assert(result.includes('Số dư cần thanh toán</span><strong class="negative">4.268.000'));
+assert(result.includes('<footer class="invoice-print-footer" aria-label="Cơ sở / Tòa nhà">Ngõ 303 · Tòa B</footer>'));
+context.invoice={...invoice,tenant_name:'<script>alert(1)</script>',property_name:'<img onerror="evil()">'};
+const safe=vm.runInContext('renderInvoicePaper(invoice)',context);
+assert(!safe.includes('<script>'));
+assert(!safe.includes('<img onerror'));
+assert(safe.includes('&lt;script&gt;'));
+// Same exact HTML must appear in the detail dialog and the printable root.
+context.invoice=invoice;
+vm.runInContext('state.data={invoices:[invoice]};openModal=(title,html)=>{window.modalContent=html;};api=async()=>({configured:false});',context);
+const opened=vm.runInContext('openInvoice(51)',context);
+opened.then(()=>{assert.equal(printRoot.innerHTML,context.window.modalContent);
+assert(result.includes('Tiền điện')&&result.includes('Tiền nước'));
+const bank=vm.runInContext(`renderInvoicePaper(invoice,{configured:true,bank_name:'Vietcombank',holder:'CHU NHA',account_number:'123456789',amount:4268000,content:'HD00051',qr_url:'https://img.vietqr.io/image/970436-123.png'})`,context);
+assert(bank.includes('THANH TOÁN CHUYỂN KHOẢN'));assert(bank.includes('CHU NHA'));
+console.log('Invoice detail/print regression OK');}).catch(e=>{console.error(e);process.exitCode=1});
+const css=fs.readFileSync(path.join(__dirname,'../app/static/styles.css'),'utf8');
+assert(css.includes('@page{size:A4;margin:0}'));
+assert(css.includes('position:fixed;bottom:12mm'));
+assert(css.includes('.invoice-sum strong{font-size:18px'));
+if(process.argv[2]){
+  fs.writeFileSync(process.argv[2],`<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>Hóa đơn mẫu</title><link rel="stylesheet" href="file://${path.join(__dirname,'../app/static/styles.css')}"></head><body><main id="app" style="max-width:760px;margin:25px auto"><div class="modal-body">${result}</div></main><div id="modal-root"></div><div id="toast-root"></div><div id="print-root">${result}</div></body></html>`);
+}

@@ -52,8 +52,9 @@ const iconPaths={
  info:'<circle cx="12" cy="12" r="10"/><path d="M12 11v6M12 7h.01"/>'};
 const ic=(name,size)=>`<svg class="icon" ${size?`style="width:${size}px;height:${size}px"`:''} viewBox="0 0 24 24" aria-hidden="true">${iconPaths[name]||iconPaths.info}</svg>`;
 
-const views={dashboard:'Tổng quan',properties:'Cơ sở',utilitymeters:'Công tơ điện nước',rooms:'Phòng trọ',tenants:'Người thuê',contracts:'Hợp đồng',readings:'Điện & nước',invoices:'Hóa đơn',payments:'Thanh toán',expenses:'Thu chi',tickets:'Sự cố',reports:'Báo cáo',settings:'Cài đặt',users:'Nhân sự',audit:'Nhật ký',deposits:'Tiền cọc',prepayments:'Thuê trả trước',residents:'Người ở',services:'Phí dịch vụ',handovers:'Bàn giao phòng',imports:'Nhập Excel',access:'Phân quyền',automation:'Lịch hóa đơn',backups:'Sao lưu',bank:'VietQR',meterTools:'Điện nước nâng cao',invoiceTools:'Hóa đơn nâng cao'};
+const views={dashboard:'Tổng quan',properties:'Cơ sở',utilitymeters:'Công tơ điện nước',rooms:'Phòng trọ',tenants:'Người thuê',contracts:'Hợp đồng',readings:'Điện & nước',invoices:'Hóa đơn',payments:'Thanh toán',expenses:'Thu chi',tickets:'Sự cố',reports:'Báo cáo',settings:'Cài đặt',users:'Nhân sự',audit:'Nhật ký',deposits:'Tiền cọc',prepayments:'Thuê trả trước',residents:'Người ở',services:'Phí dịch vụ',handovers:'Bàn giao phòng',imports:'Nhập Excel',access:'Phân quyền',automation:'Lịch hóa đơn',backups:'Sao lưu',bank:'VietQR',bankaccounts:'Tài khoản ngân hàng & QR',zalo:'Thông báo Zalo',meterTools:'Điện nước nâng cao',invoiceTools:'Hóa đơn nâng cao'};
 const integratedPages={deposits:'deposits',prepayments:'prepayments',residents:'residents',services:'services',handovers:'handovers',imports:'imports',access:'access',automation:'automation',backups:'backups',bank:'bank',meterTools:'meters',invoiceTools:'invoices'};
+const standalonePages={bankaccounts:'banks',zalo:'zalo'};
 const embeddedAbility={deposits:'deposits.view',prepayments:'prepayments.view',residents:'residents.view',services:'services.view',handovers:'handovers.view',imports:'imports.view',access:'access.view',automation:'schedules.view',backups:'backups.view',bank:'bank.view',meterTools:'readings.view',invoiceTools:'invoices.view'};
 const statuses={occupied:'Đang thuê',ready:'Còn trống',maintenance:'Bảo trì',inactive:'Ngừng dùng',active:'Hiệu lực',ended:'Đã kết thúc',new:'Mới tiếp nhận',in_progress:'Đang xử lý',done:'Đã hoàn thành',paid:'Đã thanh toán',partial:'Thanh toán một phần',unpaid:'Chưa thanh toán',overdue:'Quá hạn',low:'Thấp',medium:'Trung bình',high:'Cao'};
 const categories={repair:'Sửa chữa',utilities:'Điện nước',supplies:'Vật tư',operations:'Vận hành',salary:'Nhân công',other:'Khác',electric:'Điện',water:'Nước',internet:'Internet',furniture:'Nội thất'};
@@ -63,7 +64,7 @@ const state={user:null,csrf:'',view:'dashboard',data:{},search:'',propertyFilter
 const ENTITY_API={properties:'properties',rooms:'rooms',tenants:'tenants',contracts:'contracts',readings:'readings',invoices:'invoices',payments:'payments',expenses:'expenses',tickets:'tickets',users:'users'};
 let busy=false;
 const can=(key)=>state.user?.role==='admin'||Boolean(state.user?.permissions?.[key]);
-const canPage=(view)=>view in integratedPages?can(embeddedAbility[view]):['settings','users','audit'].includes(view)?state.user?.role==='admin':can(view+'.view');
+const canPage=(view)=>view in standalonePages?state.user?.role==='admin':view in integratedPages?can(embeddedAbility[view]):['settings','users','audit'].includes(view)?state.user?.role==='admin':can(view+'.view');
 const firstPage=()=>Object.keys(views).find(canPage)||null;
 
 
@@ -107,7 +108,7 @@ function renderShell(){
   <div class="nav-label">TÀI CHÍNH</div>${navItem('utilitymeters','Công tơ điện nước tổng','meter')}${navItem('readings','Chỉ số điện nước','meter')}${navItem('invoices','Hóa đơn tiền trọ','receipt')}${navItem('payments','Lịch sử thanh toán','wallet')}${navItem('expenses','Chi phí vận hành','expense')}
   ${navItem('deposits','Sổ tiền cọc','wallet')}${navItem('prepayments','Tiền thuê trả trước','calendar')}${navItem('services','Phí dịch vụ','layers')}${navItem('invoiceTools','Hóa đơn nháp & VietQR','receipt')}
   <div class="nav-label">VẬN HÀNH</div>${navItem('residents','Người cùng phòng','users')}${navItem('meterTools','Điện nước nâng cao','meter')}${navItem('handovers','Bàn giao & Trả phòng','contract')}${navItem('tickets','Yêu cầu sửa chữa','wrench')}${navItem('reports','Báo cáo thống kê','report')}${navItem('imports','Nhập dữ liệu Excel','download')}
-  <div class="nav-label">HỆ THỐNG</div>${navItem('access','Phân quyền nhân viên','shield')}${navItem('automation','Hóa đơn định kỳ','clock')}${navItem('backups','Sao lưu / Phục hồi','settings')}${navItem('bank','Thiết lập VietQR','wallet')}${navItem('settings','Cài đặt','settings')}${admin?navItem('users','Quản lý tài khoản','users')+navItem('audit','Nhật ký thao tác','shield'):''}
+  <div class="nav-label">HỆ THỐNG</div>${navItem('access','Phân quyền nhân viên','shield')}${navItem('automation','Hóa đơn định kỳ','clock')}${navItem('backups','Sao lưu / Phục hồi','settings')}${navItem('bankaccounts','Tài khoản ngân hàng & QR','wallet')}${navItem('zalo','Thông báo Zalo','bell')}${navItem('settings','Cài đặt','settings')}${admin?navItem('users','Quản lý tài khoản','users')+navItem('audit','Nhật ký thao tác','shield'):''}
   <div class="side-bottom"><div class="side-help">${ic('info')} <strong>TrọFlow Self-hosted</strong><p>Dữ liệu lưu an toàn trong Docker volume của riêng bạn.</p></div><div class="user-pill"><div class="avatar">${esc(initials(state.user?.full_name))}</div><div style="min-width:0"><strong>${esc(state.user?.full_name)}</strong><span>${admin?'Quản trị viên':'Nhân viên'}</span></div><button class="icon-btn" data-action="logout" title="Đăng xuất" style="margin-left:auto;background:transparent;color:#acbbcc;border:0">${ic('logout')}</button></div></div>
  </aside><div class="main-shell"><header class="topbar"><div class="topbar-left"><button class="icon-btn menu-trigger" data-action="menu" aria-label="Mở menu">${ic('menu')}</button><span class="breadcrumbs">TrọFlow &nbsp; / &nbsp; <b id="breadcrumb">${views[state.view]}</b></span></div><div class="topbar-right"><label class="top-search">${ic('search')}<input id="global-search" type="search" placeholder="Tìm trong trang hiện tại..." aria-label="Tìm kiếm"></label>${canPage('tickets')?`<button class="icon-btn" data-nav="tickets" title="Sự cố chưa xử lý">${ic('bell')}</button>`:''}<button class="icon-btn" data-action="refresh" title="Làm mới dữ liệu">${ic('refresh')}</button><div class="avatar" title="${esc(state.user?.full_name)}">${esc(initials(state.user?.full_name))}</div></div></header><main class="content" id="view-content"></main></div></div>`;
 }
@@ -141,6 +142,7 @@ const toolbar=(left,right,count)=>`<div class="toolbar"><div class="toolbar-left
 const table=(head,body,count,empty='Chưa có dữ liệu',prompt='Bắt đầu bằng cách thêm mục đầu tiên.')=>body.length?`<div class="table-wrap"><table class="data-table"><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${body.join('')}</tbody></table></div><div class="table-footer">Hiển thị ${count} bản ghi</div>`:emptyState(empty,prompt);
 const emptyState=(title,description,action='')=>`<div class="empty-state"><div class="empty-icon">${ic('layers')}</div><h3>${esc(title)}</h3><p>${esc(description)}</p>${action}</div>`;
 function renderPage(){const el=$('#view-content');if(!el||!state.user)return;
+ if(standalonePages[state.view]){el.innerHTML=`<iframe title="${esc(views[state.view])}" class="feature-frame" src="/integrations?page=${standalonePages[state.view]}"></iframe>`;return;}
  if(integratedPages[state.view]){el.innerHTML=`<iframe title="${esc(views[state.view])}" class="feature-frame" src="/advanced?embedded=1&page=${integratedPages[state.view]}"></iframe>`;return;}
  try{const viewsRender={dashboard:pageDashboard,properties:pageProperties,utilitymeters:pageUtilityMeters,rooms:pageRooms,tenants:pageTenants,contracts:pageContracts,readings:pageReadings,invoices:pageInvoices,payments:pagePayments,expenses:pageExpenses,tickets:pageTickets,reports:pageReports,settings:pageSettings,users:pageUsers,audit:pageAudit};el.innerHTML=viewsRender[state.view]();}catch(e){console.error(e);el.innerHTML=emptyState('Không thể hiển thị trang',e.message);}
 }
@@ -341,9 +343,46 @@ function openGenerate(){
  </div></form>`,`<button class="btn btn-outline" data-action="close-modal">Hủy</button><button class="btn btn-primary" type="submit" form="generate-form">${ic('receipt')} Phát hành hóa đơn</button>`);
 }
 function openPassword(){modalContext={type:'password'};openModal('Đổi mật khẩu',`<form id="password-form"><div class="field"><label>Mật khẩu hiện tại</label><input type="password" name="current_password" autocomplete="current-password" required></div><div class="field"><label>Mật khẩu mới</label><input type="password" name="new_password" minlength="10" maxlength="128" autocomplete="new-password" required></div><p class="meta-note">Sau khi đổi mật khẩu bạn sẽ được đăng xuất khỏi tất cả các thiết bị.</p></form>`,`<button class="btn btn-outline" data-action="close-modal">Hủy</button><button class="btn btn-primary" type="submit" form="password-form">Cập nhật mật khẩu</button>`);}
-function openInvoice(id){const x=state.data.invoices.find(v=>v.id===num(id));if(!x)return;
- const lines=[['Tiền thuê phòng',x.rent],['Tiền điện ('+num(x.electric_usage)+' kWh)',x.electricity],['Tiền nước ('+num(x.water_usage)+' m³)',x.water],['Phí dịch vụ',x.services],...(x.adjustment?[['Điều chỉnh',x.adjustment]]:[])];
- const detail=`<article class="invoice-paper"><div class="invoice-head"><div><div class="eyebrow">TRỌFLOW • PHIẾU THU / HÓA ĐƠN NỘI BỘ</div><h2>HÓA ĐƠN TIỀN PHÒNG</h2><span class="muted">${monthVN(x.period)} · Mã HD-${String(x.id).padStart(5,'0')}</span></div><div style="text-align:right">${badge(invoiceStatus(x))}<p class="muted" style="margin:13px 0 0;font-size:11px">Hạn thu ${dateVN(x.due_date)}</p></div></div><div class="invoice-info"><b>${esc(x.property_name)}</b><br>${esc(x.property_address||'')}<br>Khách thuê: <b>${esc(x.tenant_name)}</b> · Phòng: <b>${esc(x.room_code)}</b><br>Số điện thoại: ${esc(x.tenant_phone||'—')}</div><table class="invoice-table"><tbody>${lines.map(([title,v])=>`<tr><td>${esc(title)}</td><td>${amount(v)}</td></tr>`).join('')}</tbody></table><div class="invoice-total"><span>TỔNG CỘNG</span><span>${amount(x.total)}</span></div><div class="invoice-sum"><span>Đã thanh toán</span><strong class="positive">${amount(x.paid)}</strong></div><div class="invoice-sum"><span>Số dư cần thanh toán</span><strong class="${x.balance?'negative':''}">${amount(x.balance)}</strong></div>${x.note?`<p class="muted" style="font-size:11px;margin:18px 0 0">Ghi chú: ${esc(x.note)}</p>`:''}<p style="text-align:center;color:#9ba4b4;font-size:10px;margin:30px 0 0">Hóa đơn quản lý nội bộ; không thay thế hóa đơn điện tử theo quy định pháp luật.</p></article>`;
+// Render once for both the on-screen invoice and the browser print view.
+// All customer/property fields are escaped because invoice data comes from users.
+function renderInvoicePaper(x,bank){
+ const meterValue=v=>Number.isFinite(Number(v))&&v!==null?Number(v).toLocaleString('vi-VN',{maximumFractionDigits:3}):'—';
+ const lines=[['Tiền thuê phòng',x.rent],['Tiền điện ('+meterValue(x.electric_old)+' → '+meterValue(x.electric_new)+' kWh; tiêu thụ '+meterValue(x.electric_usage)+' kWh)',x.electricity],['Tiền nước ('+meterValue(x.water_old)+' → '+meterValue(x.water_new)+' m³; tiêu thụ '+meterValue(x.water_usage)+' m³)',x.water],['Phí dịch vụ',x.services],...(x.adjustment?[['Điều chỉnh',x.adjustment]]:[])];
+ const property=esc(x.property_name||'Cơ sở / Tòa nhà');
+ return `<article class="invoice-paper">
+  <div class="invoice-head">
+   <div><div class="eyebrow">PHIẾU THU / HÓA ĐƠN NỘI BỘ</div><h2>HÓA ĐƠN TIỀN PHÒNG</h2><span class="muted">${monthVN(x.period)} · Mã HD-${String(x.id).padStart(5,'0')}</span></div>
+   <div class="invoice-head-status">${badge(invoiceStatus(x))}<p class="muted">Hạn thu ${dateVN(x.due_date)}</p></div>
+  </div>
+  <div class="invoice-info"><div class="invoice-property"><strong>${property}</strong>${x.property_address?`<div>${esc(x.property_address)}</div>`:''}</div>
+   <div class="invoice-tenant-highlight" aria-label="Thông tin khách thuê">
+    <span>Khách thuê: <strong>${esc(x.tenant_name||'—')}</strong></span>
+    <span class="invoice-tenant-divider" aria-hidden="true">·</span>
+    <span>Phòng: <strong>${esc(x.room_code||'—')}</strong></span>
+    <span class="invoice-tenant-divider" aria-hidden="true">·</span>
+    <span>Số điện thoại: <strong>${esc(x.tenant_phone||'—')}</strong></span>
+   </div>
+  </div>
+  <table class="invoice-table"><tbody>${lines.map(([title,v])=>`<tr><td>${esc(title)}</td><td>${amount(v)}</td></tr>`).join('')}</tbody></table>
+  <div class="invoice-total"><span>TỔNG CỘNG</span><span>${amount(x.total)}</span></div>
+  <div class="invoice-sum invoice-sum-paid"><span>Đã thanh toán</span><strong class="positive">${amount(x.paid)}</strong></div>
+  <div class="invoice-sum invoice-sum-balance"><span>Số dư cần thanh toán</span><strong class="${x.balance?'negative':''}">${amount(x.balance)}</strong></div>
+  ${bank?.configured?`<section class="invoice-bank" aria-label="Thông tin chuyển khoản">
+    <div class="invoice-bank-qr"><img loading="eager" src="${esc(bank.qr_url)}" alt="Mã QR chuyển khoản ngân hàng"></div>
+    <div class="invoice-bank-info"><strong>THANH TOÁN CHUYỂN KHOẢN</strong>
+      <div>Ngân hàng: <b>${esc(bank.bank_name)}</b></div><div>Chủ tài khoản: <b>${esc(bank.holder)}</b></div>
+      <div>Số tài khoản: <b>${esc(bank.account_number)}</b></div>
+      <div>Số tiền: <b>${amount(bank.amount)}</b></div><div>Nội dung CK: <b>${esc(bank.content)}</b></div>
+      <small>Chỉ chuyển khoản khi đã kiểm tra lại tên người thụ hưởng.</small>
+    </div></section>`:''}
+  ${x.note?`<p class="invoice-note">Ghi chú: ${esc(x.note)}</p>`:''}
+  <p class="invoice-disclaimer">Hóa đơn quản lý nội bộ; không thay thế hóa đơn điện tử theo quy định pháp luật.</p>
+  <footer class="invoice-print-footer" aria-label="Cơ sở / Tòa nhà">${property}</footer>
+ </article>`;
+}
+async function openInvoice(id){const x=state.data.invoices.find(v=>v.id===num(id));if(!x)return;
+ let bank=null;try{bank=await api('v6/invoices/'+x.id+'/payment-qr')}catch(err){console.warn('QR unavailable:',err.message)}
+ const detail=renderInvoicePaper(x,bank);
  modalContext={type:'invoice',id};$('#print-root').innerHTML=detail;
  openModal('Chi tiết hóa đơn',detail,`<button class="btn btn-outline" data-action="close-modal">Đóng</button><button class="btn btn-outline" data-action="print">${ic('print')} In hóa đơn</button>${x.balance>0?`<button class="btn btn-primary" data-pay="${x.id}">${ic('wallet')} Thu tiền</button>`:''}`,true);
 }

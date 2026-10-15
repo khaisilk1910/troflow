@@ -18,6 +18,9 @@ services:
       UPLOAD_DIRECTORY: /app/uploads
       BACKUP_KEEP: "${BACKUP_KEEP:-14}"
       TROFLOW_SCHEDULER: "1"
+      # Optional bot credentials may instead be saved in Admin UI (0600 file).
+      # ZALO_BOT_USERNAME: "${ZALO_BOT_USERNAME:-}"
+      # ZALO_BOT_PASSWORD: "${ZALO_BOT_PASSWORD:-}"
     volumes:
       - type: bind
         source: /opt/troflow/data
@@ -28,6 +31,8 @@ services:
       - type: bind
         source: /opt/troflow/uploads
         target: /app/uploads
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     security_opt:
       - no-new-privileges:true
     healthcheck:

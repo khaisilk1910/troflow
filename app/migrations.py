@@ -83,13 +83,13 @@ TABLES = [
 ]
 
 
-def _backup_before_upgrade(con, db_path):
+def _backup_before_upgrade(con, db_path, tag="v4"):
     if not Path(db_path).is_file() or not con.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='invoices'").fetchone():
         return None
     backup_dir = Path(os.getenv('BACKUP_DIRECTORY','/app/backups')) / 'migrations'
     backup_dir.mkdir(parents=True,exist_ok=True)
     stamp = datetime.now().strftime('%Y%m%d-%H%M%S-%f')
-    destination = backup_dir / f'troflow-before-v4-{stamp}.sqlite3'
+    destination = backup_dir / f'troflow-before-{tag}-{stamp}.sqlite3'
     with closing(sqlite3.connect(str(destination))) as dest:
         con.backup(dest)
         if dest.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
@@ -212,3 +212,58 @@ def restore_pending(db_path):
         if stale.exists(): stale.unlink()
     os.replace(temporary,path)
     restore_file.unlink()
+
+
+def migrate_v6(con, db_path, existed_before_init=True):
+    """Additive V5->V6 integration schema and legacy bank migration."""
+    version=con.execute('PRAGMA user_version').fetchone()[0]
+    if version>=6:return
+    if existed_before_init:
+        _backup_before_upgrade(con,db_path,tag="v6")
+    con.execute('BEGIN IMMEDIATE')
+    try:
+        con.execute('''CREATE TABLE IF NOT EXISTS bank_accounts (
+          id INTEGER PRIMARY KEY,property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE RESTRICT,
+          bank_code TEXT NOT NULL,bank_name TEXT NOT NULL,holder TEXT NOT NULL,account_number TEXT NOT NULL,
+          is_default INTEGER NOT NULL DEFAULT 0,active INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(property_id,bank_code,account_number))''')
+        con.execute('''CREATE TABLE IF NOT EXISTS zalo_config (
+          id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL DEFAULT 0,
+          invoice_enabled INTEGER NOT NULL DEFAULT 0,payment_enabled INTEGER NOT NULL DEFAULT 0,
+          bot_url TEXT NOT NULL DEFAULT 'http://host.docker.internal:3000',
+          account_selection TEXT NOT NULL DEFAULT '', media_url TEXT NOT NULL DEFAULT '')''')
+        con.execute('INSERT OR IGNORE INTO zalo_config(id) VALUES(1)')
+        con.execute('''CREATE TABLE IF NOT EXISTS zalo_destinations (
+          id INTEGER PRIMARY KEY,name TEXT NOT NULL,thread_id TEXT NOT NULL,
+          kind TEXT NOT NULL CHECK(kind IN ('user','group')),
+          property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL,
+          tenant_id INTEGER REFERENCES tenants(id) ON DELETE SET NULL,
+          enabled INTEGER NOT NULL DEFAULT 1,on_invoice INTEGER NOT NULL DEFAULT 1,
+          on_payment INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)''')
+        con.execute('''CREATE TABLE IF NOT EXISTS zalo_outbox (
+          id INTEGER PRIMARY KEY,destination_id INTEGER REFERENCES zalo_destinations(id) ON DELETE SET NULL,
+          invoice_id INTEGER REFERENCES invoices(id) ON DELETE SET NULL,
+          event TEXT NOT NULL,event_key TEXT NOT NULL,message TEXT NOT NULL,
+          include_image INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','sending','failed','sent')),
+          attempts INTEGER NOT NULL DEFAULT 0,error TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,sent_at TEXT,
+          UNIQUE(event_key,destination_id))''')
+        con.execute("CREATE INDEX IF NOT EXISTS idx_zalo_outbox_status ON zalo_outbox(status,id)")
+        con.execute('''CREATE TABLE IF NOT EXISTS notification_media (
+          token TEXT PRIMARY KEY,invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+          expires_at TEXT NOT NULL,created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)''')
+        # Migrate V2 bank fields; keep the previous property fields untouched for rollback.
+        for row in con.execute('SELECT id,bank_code,bank_account,bank_name FROM properties').fetchall():
+            prop,code,acct,holder=row
+            if code and acct:
+                con.execute('''INSERT OR IGNORE INTO bank_accounts
+                  (property_id,bank_code,bank_name,holder,account_number,is_default,active)
+                  VALUES(?,?,?,?,?,1,1)''',
+                  (prop,code,code,holder or '',acct))
+        con.execute('PRAGMA user_version=6')
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise

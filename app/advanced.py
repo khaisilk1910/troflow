@@ -373,6 +373,8 @@ def publish_invoice(ident:int,user=Depends(authorized)):
         if invoice['status']!='draft':fail('Hóa đơn đã chốt.')
         con.execute("UPDATE invoices SET status='published',published_at=? WHERE id=?",(date.today().isoformat(),ident))
         audit(con,user,'publish','invoice',ident)
+        from .notify import enqueue_invoice_event
+        enqueue_invoice_event(con,ident,'invoice')
     return json_ok()
 
 # 07 VietQR quick link (bank image is an external service, never an auto-payment acknowledgment).
@@ -385,25 +387,38 @@ def bank_settings(ident:int,data:dict,user=Depends(admin_user)):
     if account and not re.fullmatch(r'[0-9]{4,25}',account):fail('Số tài khoản không hợp lệ.')
     with tx() as con:
         con.execute('UPDATE properties SET bank_code=?,bank_account=?,bank_name=? WHERE id=?',(bank,account,holder,ident))
+        # Compatibility: legacy bank setting must update the active V6 bank too.
+        if bank and account:
+            from .notify import _save_bank
+            existing=one(con,'SELECT id FROM bank_accounts WHERE property_id=? AND bank_code=? AND account_number=?',
+                         (ident,bank.upper(),account))
+            if existing:
+                con.execute('UPDATE bank_accounts SET is_default=0 WHERE property_id=?',(ident,))
+                con.execute('UPDATE bank_accounts SET is_default=1,active=1,holder=? WHERE id=?',(holder,existing['id']))
+            else:
+                _save_bank(con,{'property_id':ident,'bank_code':bank.upper(),'bank_name':bank.upper(),
+                               'holder':holder,'account_number':account,'is_default':1,'active':1})
         audit(con,user,'update','bank_config',ident)
     return json_ok()
 
 @router.get('/invoices/{ident}/vietqr')
 def vietqr(ident:int,user=Depends(authorized)):
+    """Backwards-compatible V2 VietQR endpoint; now uses the active default bank."""
+    from .notify import _qr_details
     with connect() as con:
         right(user,invoice_property(con,ident),'view')
-        inv=one(con,'''SELECT i.*,p.bank_code,p.bank_account,p.bank_name FROM invoices i
-          JOIN rooms r ON r.id=i.room_id JOIN properties p ON p.id=r.property_id WHERE i.id=?''',(ident,))
-        if not inv['bank_code'] or not inv['bank_account']:fail('Cơ sở chưa cấu hình ngân hàng.')
-        paid=one(con,'SELECT COALESCE(SUM(amount),0) s FROM payments WHERE invoice_id=?',(ident,))['s']
-        balance=max(0,inv['total']-paid)
-        if inv['status']!='published':fail('Hãy chốt hóa đơn trước khi xuất VietQR.')
-        add_info=f'TROFLOW HD{ident} {inv["period"].replace("-","")}'
-        params=urllib.parse.urlencode({'amount':balance,'addInfo':add_info,'accountName':inv['bank_name']})
-        url=f'https://img.vietqr.io/image/{inv["bank_code"]}-{inv["bank_account"]}-compact2.png?{params}'
-        return {'url':url,'amount':balance,'transfer_note':add_info,'bank_name':inv['bank_name'],
-                'bank_code':inv['bank_code'],'bank_account':inv['bank_account'],
-                'disclaimer':'QR chỉ tạo yêu cầu chuyển khoản, không xác nhận giao dịch đã đến ngân hàng.'}
+        state=one(con,'SELECT status FROM invoices WHERE id=?',(ident,))
+        if not state:fail('Không tìm thấy hóa đơn.',404)
+        if state['status']!='published':fail('Hãy chốt hóa đơn trước khi xuất VietQR.')
+        result=_qr_details(con,ident)
+        if not result['configured']:fail('Cơ sở chưa cấu hình tài khoản ngân hàng.')
+        transfer_note=f'TROFLOW HD{ident} {one(con,"SELECT period FROM invoices WHERE id=?",(ident,))["period"].replace("-","")}'
+        query=urllib.parse.urlencode({'amount':result['amount'],'addInfo':transfer_note,'accountName':result['holder']})
+        url=f'https://img.vietqr.io/image/{result["bank_code"]}-{result["account_number"]}-compact2.png?{query}'
+        return {'url':url,'amount':result['amount'],
+                'transfer_note':transfer_note,'bank_name':result['holder'],
+                'bank_code':result['bank_code'],'bank_account':result['account_number'],
+                'disclaimer':'QR chỉ tạo yêu cầu chuyển khoản, không xác nhận đã nhận tiền.'}
 
 # 08 HANDOVER & CHECKOUT (atomic deposit withholding)
 @router.get('/handovers')

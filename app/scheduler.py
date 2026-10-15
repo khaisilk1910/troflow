@@ -52,6 +52,11 @@ def tick():
         make_backup(dbmodule.DB_PATH)
         with tx() as con:
             con.execute("INSERT INTO app_settings(key,value) VALUES('backup_last_date',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",(today,))
+    try:
+        from .notify import process_outbox
+        process_outbox()
+    except Exception:
+        log.exception("Zalo outbox worker failed")
     period=today[:7]
     for item in schedules:
         if now.day>=item['day_of_month'] and item['last_period']!=period:

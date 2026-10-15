@@ -163,7 +163,7 @@ class UpgradeTests(unittest.TestCase):
         db.DB_PATH=legacy
         db.init_db();db.init_db()
         with db.connect() as con:
-            self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],5)
+            self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],6)
             self.assertEqual(con.execute('SELECT COUNT(*) FROM contract_residents').fetchone()[0],1)
             self.assertEqual(con.execute('SELECT name FROM properties WHERE id=1').fetchone()[0],'Cơ sở cũ')
             self.assertEqual(con.execute('SELECT prorate FROM contracts WHERE id=1').fetchone()[0],0)
