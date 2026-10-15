@@ -1,6 +1,6 @@
 fastapi==0.143.1
 starlette==1.8.0
-uvicorn==0.48.0
+uvicorn==0.54.0
 openpyxl==3.1.5
 python-multipart==0.0.32
 reportlab==4.4.4
