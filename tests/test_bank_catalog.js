@@ -1,0 +1,16 @@
+const vm=require('vm'), fs=require('fs'), path=require('path');
+const source=fs.readFileSync(path.resolve(__dirname,'../app/static/integrations.js'),'utf8');
+const script=source.replace(/reload\(\)\.catch\(e=>\{root\.innerHTML=[\s\S]*?\}\);\s*document\.body\.insertAdjacentHTML\([^;]+;/,'');
+const document={getElementById(id){return id==='ui'?{innerHTML:''}:null},addEventListener(){},body:{insertAdjacentHTML(){}}};
+const ctx={document,location:{search:'?page=banks'},URLSearchParams,console,alert(){},confirm(){},setTimeout(){}};
+vm.createContext(ctx);
+vm.runInContext(script,ctx,{timeout:1000});
+const records=JSON.parse(fs.readFileSync(path.resolve(__dirname,'../app/vietqr_banks.json'),'utf8')).banks;
+vm.runInContext(`bankCatalog.banks=${JSON.stringify(records.map(b=>({bin:b[0],shortName:b[1],name:b[2],code:b[3],transferSupported:!!b[4]})))};`,ctx);
+const options=vm.runInContext('bankOptions("","Vietcombank")',ctx);
+if(!options.includes('970436') || options.includes('970422'))throw Error('Bank search fails');
+const accent=vm.runInContext('bankOptions("","a chau")',ctx);
+if(!accent.includes('970416'))throw Error('Diacritics search fails');
+const all=vm.runInContext('bankOptions("","")',ctx);
+if((all.match(/<option value=/g)||[]).length!==77)throw Error('Expected 75 banks, placeholder and manual');
+console.log('VietQR dropdown: search, BIN and offline list OK (75 banks).');

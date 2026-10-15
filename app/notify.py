@@ -18,6 +18,7 @@ from urllib.error import HTTPError, URLError
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from .db import connect, tx, one, rows
+from . import bank_catalog
 from . import db as dbmodule
 from .main import authorized, admin_user, trim, positive, fail, audit
 
@@ -105,6 +106,19 @@ def _qr_details(con,invoice_id):
             'amount':balance,'content':note,'qr_url':f'https://img.vietqr.io/image/{code}-{account}-compact2.png?{query}'}
 
 
+@router.get('/api/v6/bank-catalog')
+def vietqr_banks(user=Depends(admin_user)):
+    return bank_catalog.get_catalog()
+
+
+@router.post('/api/v6/bank-catalog/refresh')
+def refresh_vietqr_banks(user=Depends(admin_user)):
+    try:
+        return bank_catalog.refresh_catalog()
+    except (ValueError, OSError, TimeoutError) as exc:
+        fail('Không thể cập nhật từ VietQR. Danh sách tích hợp sẵn vẫn dùng được. ' + str(exc), 502)
+
+
 @router.get('/api/v6/banks')
 def banks(user=Depends(admin_user)):
     with connect() as con:
@@ -115,6 +129,14 @@ def _bank_values(data):
     prop=positive(data.get('property_id'),'Cơ sở',1)
     bank_code=trim(data.get('bank_code'),'Mã ngân hàng',20,True).upper()
     bank_name=trim(data.get('bank_name'),'Tên ngân hàng',120,True)
+    # Only newly selected catalog items require authoritative BIN/name pairing.
+    # Legacy/manual records can still be edited without changing their bank details.
+    chosen=trim(data.get('catalog_bin'),'Ngân hàng đã chọn',20)
+    if chosen and chosen!='manual':
+        match=next((b for b in bank_catalog.get_catalog()['banks'] if b['bin']==chosen),None)
+        if not match or bank_code!=chosen:
+            fail('Mã BIN không khớp ngân hàng đã chọn.')
+        bank_name=match['shortName']
     holder=trim(data.get('holder'),'Chủ tài khoản',120,True)
     account_number=trim(data.get('account_number'),'Số tài khoản',34,True)
     if not re.fullmatch(r'[A-Z0-9]{2,20}',bank_code):fail('Mã BIN/ngân hàng chỉ có chữ và số.')

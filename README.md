@@ -152,3 +152,8 @@ TrọFlow là mã nguồn trong gói zip này; không có phụ thuộc vào d�
 ## Tính năng TrọFlow 5.2
 
 Tích hợp Zalo Bot Server cùng máy Ubuntu, quản lý nhiều tài khoản ngân hàng, VietQR trên hóa đơn, chỉ số điện nước cũ/mới ở chi tiết và bản in. Xem [README-V5.2.md](README-V5.2.md) để cấu hình và yêu cầu bảo mật.
+
+
+## Cập nhật 5.3 — Danh mục ngân hàng VietQR
+
+Xem [README-V5.3.md](README-V5.3.md) về chọn ngân hàng có tìm kiếm, tự điền BIN và làm mới danh mục từ VietQR.

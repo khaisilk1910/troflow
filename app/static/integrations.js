@@ -1,5 +1,5 @@
 'use strict';
-const root=document.getElementById('ui');let csrf='',banks=[],dest=[],props=[],tenants=[],logs=[],config={};
+const root=document.getElementById('ui');let csrf='',banks=[],dest=[],props=[],tenants=[],logs=[],config={},bankCatalog={banks:[],count:0};
 const page=new URLSearchParams(location.search).get('page')==='banks'?'banks':'zalo';
 const E=x=>String(x??'').replace(/[&<>"']/g,v=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[v]));
 const req=async(path,method='GET',data)=>{const res=await fetch('/api/'+path,{method,credentials:'same-origin',headers:{...(method==='GET'?{}:{'Content-Type':'application/json','X-CSRF-Token':csrf})},body:data===undefined?undefined:JSON.stringify(data)});const j=await res.json().catch(()=>({}));if(!res.ok)throw Error(j.detail||'Yêu cầu bị từ chối.');return j};
@@ -15,16 +15,64 @@ const close=()=>document.getElementById('overlay')?.remove();
 async function run(fn){try{await fn()}catch(e){flash(e.message,true)}}
 async function reload(){const me=await req('auth/me');if(me.user.role!=='admin'){root.textContent='Chỉ quản trị viên được truy cập cấu hình.';return}csrf=me.csrf;
  [props,tenants]=await Promise.all([req('properties'),req('tenants')]);
- if(page==='banks'){banks=await req('v6/banks');renderBanks()}else{[dest,config,logs]=await Promise.all([req('v6/zalo/destinations'),req('v6/zalo/settings'),req('v6/zalo/outbox')]);renderZalo()}}
-function renderBanks(){root.innerHTML=`<div class="top"><div><div class="eyebrow">TRỌFLOW / TÀI CHÍNH</div><h1>Tài khoản ngân hàng & QR</h1><p class="muted">Quản lý nhiều tài khoản theo cơ sở. Hóa đơn ưu tiên tài khoản mặc định đang bật.</p></div>${btn('+ Thêm tài khoản','data-action="bank-add"','primary')}</div>
- <div class="card"><div class="table-wrap"><table><thead><tr><th>Cơ sở</th><th>Ngân hàng</th><th>Chủ tài khoản</th><th>Số tài khoản</th><th>Trạng thái</th><th>Thao tác</th></tr></thead><tbody>${banks.map(b=>`<tr><td><strong>${E(b.property_name)}</strong></td><td>${E(b.bank_name)}<br><small>${E(b.bank_code)}</small></td><td>${E(b.holder)}</td><td><strong>${E(b.account_number)}</strong></td><td><span class="tag ${b.active?'':'off'}">${b.active?(b.is_default?'Mặc định':'Đang dùng'):'Đã tắt'}</span></td><td><div class="actions">${btn('Xem QR',`data-action="bank-preview" data-id="${b.id}"`,'small-btn')}${btn('Sửa',`data-action="bank-edit" data-id="${b.id}"`,'small-btn')}${btn('Xóa',`data-action="bank-delete" data-id="${b.id}"`,'danger small-btn')}</div></td></tr>`).join('')}</tbody></table></div>${banks.length?'':'<p class="muted">Chưa có tài khoản. Nhấn “Thêm tài khoản”.</p>'}</div><p class="hint">VietQR là mã chuyển khoản; không đồng nghĩa giao dịch đã được ngân hàng xác nhận. Chỉ ghi nhận “đã thu” khi đối soát thực tế.</p>`}
+ if(page==='banks'){[banks,bankCatalog]=await Promise.all([req('v6/banks'),req('v6/bank-catalog')]);renderBanks()}else{[dest,config,logs]=await Promise.all([req('v6/zalo/destinations'),req('v6/zalo/settings'),req('v6/zalo/outbox')]);renderZalo()}}
+function renderBanks(){root.innerHTML=`<div class="top"><div><div class="eyebrow">TRỌFLOW / TÀI CHÍNH</div><h1>Tài khoản ngân hàng & QR</h1><p class="muted">Quản lý nhiều tài khoản theo cơ sở. Hóa đơn ưu tiên tài khoản mặc định đang bật.</p></div><div class="actions">${btn('↻ Cập nhật danh sách VietQR','data-action="bank-catalog-refresh"')}${btn('+ Thêm tài khoản','data-action="bank-add"','primary')}</div></div>
+ <div class="card"><div class="table-wrap"><table><thead><tr><th>Cơ sở</th><th>Ngân hàng</th><th>Chủ tài khoản</th><th>Số tài khoản</th><th>Trạng thái</th><th>Thao tác</th></tr></thead><tbody>${banks.map(b=>`<tr><td><strong>${E(b.property_name)}</strong></td><td>${E(b.bank_name)}<br><small>${E(b.bank_code)}</small></td><td>${E(b.holder)}</td><td><strong>${E(b.account_number)}</strong></td><td><span class="tag ${b.active?'':'off'}">${b.active?(b.is_default?'Mặc định':'Đang dùng'):'Đã tắt'}</span></td><td><div class="actions">${btn('Xem QR',`data-action="bank-preview" data-id="${b.id}"`,'small-btn')}${btn('Sửa',`data-action="bank-edit" data-id="${b.id}"`,'small-btn')}${btn('Xóa',`data-action="bank-delete" data-id="${b.id}"`,'danger small-btn')}</div></td></tr>`).join('')}</tbody></table></div>${banks.length?'':'<p class="muted">Chưa có tài khoản. Nhấn “Thêm tài khoản”.</p>'}</div><p class="hint">Danh mục ${bankCatalog.count} ngân hàng/đơn vị từ <a href="https://www.vietqr.io/api-bank" target="_blank" rel="noopener noreferrer">VietQR</a> (cập nhật ${E(bankCatalog.retrieved_on||'đang dùng bản tích hợp')}). Trường “Hỗ trợ quét” phản ánh khả năng ứng dụng ngân hàng gửi tiền bằng cách quét QR, không đảm bảo mọi tài khoản đều nhận được tiền qua VietQR.</p><p class="hint">VietQR là mã chuyển khoản; không đồng nghĩa giao dịch đã được ngân hàng xác nhận. Chỉ ghi nhận “đã thu” khi đối soát thực tế.</p>`}
 function previewBank(id){const b=banks.find(x=>x.id===id);if(!b)return;
  const qr=`https://img.vietqr.io/image/${encodeURIComponent(b.bank_code)}-${encodeURIComponent(b.account_number)}-compact2.png?accountName=${encodeURIComponent(b.holder)}`;
  backdrop(`<header><h2>QR tài khoản · ${E(b.property_name)}</h2>${btn('✕','data-action="close"')}</header>
  <div style="text-align:center"><img src="${E(qr)}" width="250" height="250" alt="QR nhận chuyển khoản" style="max-width:100%;object-fit:contain"><h3>${E(b.bank_name)}</h3><strong>${E(b.account_number)}</strong><p>${E(b.holder)}</p></div>
  <div class="warn">QR này chưa có số tiền/nội dung. Trên hóa đơn, TrọFlow sẽ tự điền số tiền còn phải thanh toán và mã hóa đơn.</div>`);
 }
-function editBank(id){const b=banks.find(x=>x.id===id)||{property_id:props[0]?.id||'',active:1,is_default:1};backdrop(`<header><h2>${id?'Sửa':'Thêm'} tài khoản ngân hàng</h2>${btn('✕','data-action="close"')}</header><form id="bank-form" data-id="${id||''}"><div class="grid">${select('Cơ sở / Tòa nhà','property_id',b.property_id,opts(props))}${field('Mã ngân hàng / BIN VietQR','bank_code',b.bank_code||'','text','required maxlength="20"')}${field('Tên ngân hàng','bank_name',b.bank_name||'','text','required maxlength="120"')}${field('Tên chủ tài khoản','holder',b.holder||'','text','required maxlength="120"')}${field('Số tài khoản','account_number',b.account_number||'','text','required maxlength="34"')}</div><div class="checks">${ck('Đang sử dụng','active',b.active)}${ck('Là tài khoản mặc định','is_default',b.is_default)}</div><div class="actions">${btn('Hủy','type="button" data-action="close"')}${btn('Lưu tài khoản','type="submit"','primary')}</div></form><p class="hint">Mã ngân hàng dùng mã BIN/VietQR theo nhà cung cấp. Ví dụ: 970436 (Vietcombank).</p>`)}
+function bankOptions(selected='',query=''){
+ const normalized=x=>String(x||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/đ/g,'d');
+ const needle=normalized(query);
+ const all=bankCatalog.banks||[];
+ const filtered=all.filter(b=>normalized(`${b.shortName} ${b.name} ${b.bin} ${b.code}`).includes(needle));
+ if(selected && !filtered.some(b=>b.bin===selected)){
+   const current=all.find(b=>b.bin===selected);if(current)filtered.unshift(current);
+ }
+ const options=filtered.map(b=>`<option value="${E(b.bin)}">${E(b.shortName)} · ${E(b.bin)}${b.transferSupported?'':' · Chưa xác nhận hỗ trợ quét'}</option>`).join('');
+ return `<option value="">-- Chọn ngân hàng (${filtered.length} kết quả) --</option>${options}<option value="manual">Khác / nhập BIN thủ công</option>`;
+}
+function editBank(id){
+ const b=banks.find(x=>x.id===id)||{property_id:props[0]?.id||'',active:1,is_default:1};
+ const isListed=(bankCatalog.banks||[]).some(x=>x.bin===b.bank_code);
+ const selected=isListed?b.bank_code:(b.bank_code?'manual':'');
+ backdrop(`<header><h2>${id?'Sửa':'Thêm'} tài khoản ngân hàng</h2>${btn('✕','data-action="close"')}</header>
+  <form id="bank-form" data-id="${id||''}"><div class="grid">
+  ${select('Cơ sở / Tòa nhà','property_id',b.property_id,opts(props))}
+  <div class="field"><label for="bank-search">Tìm kiếm ngân hàng</label><input id="bank-search" type="search" autocomplete="off" placeholder="VD: Vietcombank, MB, 970436..."></div>
+  <div class="field bank-picker-wrap"><label for="bank-picker">Ngân hàng / mã BIN VietQR <span class="required">*</span></label><select id="bank-picker" name="catalog_bin" required>${bankOptions(selected)}</select></div>
+  ${field('Mã ngân hàng / BIN VietQR','bank_code',b.bank_code||'','text','id="bank-bin" required maxlength="20" inputmode="numeric"')}
+  ${field('Tên ngân hàng','bank_name',b.bank_name||'','text','id="bank-name" required maxlength="120"')}
+  ${field('Tên chủ tài khoản','holder',b.holder||'','text','required maxlength="120"')}
+  ${field('Số tài khoản','account_number',b.account_number||'','text','required maxlength="34"')}
+  </div><div class="checks">${ck('Đang sử dụng','active',b.active)}${ck('Là tài khoản mặc định','is_default',b.is_default)}</div>
+  <div class="actions">${btn('Hủy','type="button" data-action="close"')}${btn('Lưu tài khoản','type="submit"','primary')}</div></form>
+  <p class="hint">Chọn ngân hàng để tự điền BIN và tên; không cần nhớ mã 6 chữ số. Khi không tìm thấy, chọn “Khác / nhập BIN thủ công”. Hãy quét kiểm tra QR trước khi gửi cho khách thuê.</p>`);
+ const picker=document.getElementById('bank-picker');picker.value=selected;
+ updateBankFields(selected);
+}
+function updateBankFields(value){
+ const bin=document.getElementById('bank-bin'),name=document.getElementById('bank-name');
+ if(!bin||!name)return;
+ const entry=(bankCatalog.banks||[]).find(b=>b.bin===value);
+ if(entry){bin.value=entry.bin;name.value=entry.shortName;bin.readOnly=true;name.readOnly=true;}
+ else if(value==='manual'){bin.readOnly=false;name.readOnly=false;}
+ else {bin.value='';name.value='';bin.readOnly=true;name.readOnly=true;}
+}
+document.addEventListener('input',event=>{
+ if(event.target.id!=='bank-search')return;
+ const picker=document.getElementById('bank-picker');if(!picker)return;
+ const selected=picker.value;
+ picker.innerHTML=bankOptions(selected,event.target.value);
+ picker.value=selected;
+ // Keep an explicit choice; searching should not silently change the bank.
+});
+document.addEventListener('change',event=>{
+ if(event.target.id==='bank-picker')updateBankFields(event.target.value);
+});
 function renderZalo(){root.innerHTML=`<div class="top"><div><div class="eyebrow">TRỌFLOW / TÍCH HỢP</div><h1>Thông báo Zalo</h1><p class="muted">Kết nối Zalo Bot Server đang chạy trên Ubuntu · Quản lý người nhận và nhật ký gửi</p></div><span class="tag ${config.enabled?'':'off'}">${config.enabled?'● Đang bật':'○ Đang tắt'}</span></div>
  <div class="card"><div class="top"><div><h2>Kết nối Zalo Bot Server</h2><p class="hint">Đăng nhập bằng session qua API của bot; thông tin mật khẩu không bao giờ được trả về giao diện.</p></div>${btn('Lưu cấu hình','type="submit" form="config-form"','primary')}</div><form id="config-form"><div class="grid">${field('Địa chỉ bot trên server','bot_url',config.bot_url,'url','required')}${field('Zalo ownId hoặc số điện thoại account đã đăng nhập','account_selection',config.account_selection||'','text','required')}${field('URL nội bộ TroFlow để bot tải ảnh','media_url',config.media_url||'','url','required')}${field('Username quản trị Zalo Bot','username',config.username||'','text','autocomplete="off"')}${field('Mật khẩu bot (để trống nếu giữ nguyên)','password','','password','autocomplete="new-password"')}</div><div class="checks">${ck('Bật gửi thông báo','enabled',config.enabled)}${ck('Gửi khi phát hành hóa đơn','invoice_enabled',config.invoice_enabled)}${ck('Gửi khi thu tiền','payment_enabled',config.payment_enabled)}</div><div class="hint">Trạng thái thông tin đăng nhập: <b>${config.credentials_configured?'Đã cấu hình':'Chưa cấu hình'}</b>${config.environment_credentials?' (qua biến môi trường)':''}. Bot sử dụng API <code>sendMessageByAccount</code> / <code>sendImageByAccount</code>. Gửi ảnh cần URL nội bộ hai chiều có thể truy cập.</div></form></div>
  <div class="card"><div class="top"><div><h2>Danh sách nơi nhận</h2><p class="hint">User hoặc nhóm Zalo, có thể gắn với khách thuê và cơ sở.</p></div>${btn('+ Thêm nơi nhận','data-action="dest-add"','primary')}</div>
@@ -43,6 +91,7 @@ document.addEventListener('click',e=>{const el=e.target.closest('[data-action]')
  if(action==='close'){close();return}
  if(action==='reload'){await reload();return}
  if(action==='bank-add'){editBank();return}
+ if(action==='bank-catalog-refresh'){bankCatalog=await req('v6/bank-catalog/refresh','POST',{});renderBanks();flash('Đã cập nhật '+bankCatalog.count+' ngân hàng từ VietQR.');return}
  if(action==='bank-preview'){previewBank(id);return}
  if(action==='bank-edit'){editBank(id);return}
  if(action==='bank-delete'){if(!confirm('Xóa tài khoản ngân hàng này?'))return;await req('v6/banks/'+id,'DELETE');await reload();return}
