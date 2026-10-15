@@ -62,6 +62,32 @@ class TenantIsolationTests(unittest.TestCase):
    self.assertEqual(self.client1.get(endpoint).status_code,401,endpoint)
   self.assertEqual(self.client1.get('/api/tenant/admin/submissions').status_code,401)
   self.assertEqual(self.client1.get('/api/tenant/owner/photo').status_code,404)
+ def test_home_rates_prepayments_refunds_and_tenant_scope(self):
+  self.call('PUT','properties/'+str(self.prop),{'name':'Ngõ 303','electric_rate':4100,'water_rate':27000,'service_fee':120000})
+  first=self.call('POST','v2/prepayments',{'contract_id':self.cid1,'start_period':'2026-11','end_period':'2027-01','paid_on':'2026-10-15','method':'transfer'})
+  self.assertEqual(first['months'],3)
+  other=self.call('POST','v2/prepayments',{'contract_id':self.cid2,'start_period':'2026-11','end_period':'2026-11','paid_on':'2026-10-15','method':'cash'})
+  self.assertNotEqual(first['id'],other['id'])
+  with db.connect() as con:
+   coverage=db.one(con,'SELECT id FROM rent_coverage WHERE batch_id=? AND period=?',(first['id'],'2026-12'))
+  self.call('POST',f'v2/prepayments/{coverage["id"]}/refund',{'refunded_on':'2026-10-15','reason':'Đã hoàn trả kỳ tháng'})
+  self.login(self.client1,self.tenant1)
+  self.login(self.client2,self.tenant2)
+  a=self.client1.get('/api/tenant/home').json()
+  b=self.client2.get('/api/tenant/home').json()
+  room=a['contracts'][0]
+  self.assertEqual((room['electric_rate'],room['water_rate'],room['service_fee']),(4100,27000,120000))
+  self.assertEqual(room['due_day'],5)
+  self.assertEqual(len(a['prepayments']),1)
+  batch=a['prepayments'][0]
+  self.assertEqual(batch['total_paid'],9000000)
+  self.assertEqual(batch['active_amount'],6000000)
+  self.assertEqual(batch['refunded_amount'],3000000)
+  self.assertEqual([p['status'] for p in batch['periods']],['active','refunded','active'])
+  self.assertEqual(len(b['prepayments']),1)
+  self.assertEqual(b['prepayments'][0]['room_code'],'P09')
+  self.assertNotIn('P09',str(a))
+  self.assertNotIn('P01',str(b))
  def test_public_requires_random_code(self):
   c=self.tenant1['portal_credentials']
   with patch.object(tenant_portal,'PUBLIC_MODE',True):

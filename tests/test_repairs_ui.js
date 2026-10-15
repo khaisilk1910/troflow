@@ -6,7 +6,7 @@ const vm = require('node:vm');
 const read = file => fs.readFileSync(path.join(__dirname,'..','app','static',file),'utf8');
 const tenant=read('tenant.js'),app=read('app.js'),settings=read('integrations.js');
 assert(tenant.includes('form id="repair-form"'));
-assert(tenant.includes('liveRooms[0].room_code'));
+assert(tenant.includes('live[0].room_code'));
 assert(!/id="repair-form"[^`]*name="room_id"/.test(tenant));
 assert(tenant.includes("req('/api/tenant/tickets'"));
 assert(tenant.includes('name="photos"') && tenant.includes('multiple'));
@@ -31,7 +31,7 @@ const fake={
  '/api/tenant/tickets':[{id:4,title:'Sự cố vòi nước',room_code:'P01',priority:'medium',status:'new',reported_at:'2026-10-15',photo_count:2}]
 };
 const ctx=vm.createContext({
- document:{querySelector:getNode,addEventListener(){}},
+ document:{querySelector:getNode,querySelectorAll:()=>[],addEventListener(){}},
  fetch:async url=>({ok:true,json:async()=>fake[url]}),
  console,Date,URL,FormData,setTimeout
 });
@@ -39,7 +39,8 @@ vm.runInContext(tenant,ctx,{filename:'tenant.js'});
 setImmediate(()=>{
  const html=getNode('#portal').innerHTML;
  assert(html.includes('id="repair-form"'),html.slice(-700));
- assert(html.includes('Phòng: <strong>P01 · Ngõ 303</strong>'));
+ assert(html.includes('data-nav-tab="repairs"'));
+ assert(html.includes('Phòng <b>P01 · Ngõ 303</b>'));
  assert(html.includes('Sự cố vòi nước'));
  assert(html.includes('Xem 2 ảnh'));
  assert(!html.includes('P09'));

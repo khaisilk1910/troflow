@@ -137,6 +137,7 @@ def tenant_logout(request:Request,response:Response,t=Depends(csrf_tenant)):
 
 def mine(con,t):
     return rows(con,'''SELECT c.id contract_id,c.room_id,c.start_date,c.end_date,c.monthly_rent,
+                   c.deposit,c.due_day,p.electric_rate,p.water_rate,p.service_fee,
                    r.code room_code,p.name property_name
                    FROM contracts c JOIN rooms r ON r.id=c.room_id JOIN properties p ON p.id=r.property_id
                    WHERE c.tenant_id=? AND r.property_id=? AND c.status='active' ORDER BY c.id DESC''',
@@ -158,7 +159,7 @@ def tenant_home(t=Depends(session_tenant)):
     with connect() as con:
         contracts=mine(con,t)
         ids=[x['contract_id'] for x in contracts]
-        invoices=[];readings=[]
+        invoices=[];readings=[];prepayments=[]
         if ids:
             placeholders=','.join('?' for _ in ids)
             invoices=rows(con,f'''SELECT i.id,i.contract_id,i.period,i.total,i.rent,i.electricity,i.water,i.services,
@@ -172,12 +173,39 @@ def tenant_home(t=Depends(session_tenant)):
                WHERE c.id IN ({placeholders}) AND d.period||'-01'<=c.end_date AND
                   date(d.period||'-01','+1 month','-1 day')>=c.start_date
                ORDER BY d.period DESC LIMIT 100''',ids)
+            # Scope rent coverage to contracts verified by mine(). Refunded periods
+            # remain visible in the receipt history but are not counted as active.
+            coverage=rows(con,f'''SELECT x.contract_id,x.batch_id,x.period,x.amount,x.status,
+               b.paid_on,b.method,b.total batch_total
+               FROM rent_coverage x JOIN rent_prepayment_batches b ON b.id=x.batch_id
+               WHERE x.contract_id IN ({placeholders})
+               ORDER BY b.paid_on DESC,b.id DESC,x.period ASC''',ids)
+            batches={}
+            room_codes={c['contract_id']:c['room_code'] for c in contracts}
+            for x in coverage:
+                key=x['batch_id']
+                if key not in batches:
+                    batch={'batch_id':key,'contract_id':x['contract_id'],
+                           'room_code':room_codes[x['contract_id']],
+                           'paid_on':x['paid_on'],'method':x['method'],
+                           'total_paid':x['batch_total'],'active_amount':0,
+                           'refunded_amount':0,'periods':[]}
+                    batches[key]=batch
+                    prepayments.append(batch)
+                batch=batches[key]
+                batch['periods'].append({'period':x['period'],'amount':x['amount'],
+                                         'status':x['status']})
+                if x['status']=='active':
+                    batch['active_amount']+=x['amount']
+                else:
+                    batch['refunded_amount']+=x['amount']
         submissions=rows(con,'''SELECT s.id,s.contract_id,s.period,s.electric_new,s.water_new,s.status,s.feedback,
                                s.created_at FROM tenant_meter_submissions s
                                WHERE s.tenant_id=? AND s.property_id=? ORDER BY s.id DESC LIMIT 50''',
                                (t['tenant_id'],t['property_id']))
         return {'tenant':{'name':t['full_name'],'phone':t['phone'],'property':t['property_name']},
-                'contracts':contracts,'invoices':invoices,'readings':readings,'submissions':submissions,
+                'contracts':contracts,'invoices':invoices,'readings':readings,
+                'prepayments':prepayments,'submissions':submissions,
                 'owner':owner_public(con,t['property_id'])}
 
 
