@@ -1,0 +1,11 @@
+__pycache__
+*.pyc
+.git
+.env
+data
+*.sqlite3
+.pytest_cache
+node_modules
+_qa
+previews
+tests

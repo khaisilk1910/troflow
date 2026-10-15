@@ -1,0 +1,39 @@
+# Portainer: Stacks -> Add stack -> Git repository -> compose path: deploy/portainer-stack.yml
+# Docker standalone / Docker Compose (not Docker Swarm).
+# Set TROFLOW_IMAGE in the Portainer stack environment to ghcr.io/<owner>/<repo>:latest.
+services:
+  troflow:
+    image: ${TROFLOW_IMAGE:?Set TROFLOW_IMAGE in Portainer stack environment}
+    container_name: troflow
+    init: true
+    restart: unless-stopped
+    ports:
+      # Default: local reverse proxy only. For LAN access set TROFLOW_BIND_IP=0.0.0.0.
+      - "${TROFLOW_BIND_IP:-127.0.0.1}:${TROFLOW_PORT:-8080}:8000"
+    environment:
+      DATABASE_PATH: /app/data/troflow.db
+      COOKIE_SECURE: "${COOKIE_SECURE:-0}"
+      TZ: "${TROFLOW_TZ:-Asia/Ho_Chi_Minh}"
+      BACKUP_DIRECTORY: /app/backups
+      UPLOAD_DIRECTORY: /app/uploads
+      BACKUP_KEEP: "${BACKUP_KEEP:-14}"
+      TROFLOW_SCHEDULER: "1"
+    volumes:
+      - type: bind
+        source: /opt/troflow/data
+        target: /app/data
+      - type: bind
+        source: /opt/troflow/backups
+        target: /app/backups
+      - type: bind
+        source: /opt/troflow/uploads
+        target: /app/uploads
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health',timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    stop_grace_period: 30s
