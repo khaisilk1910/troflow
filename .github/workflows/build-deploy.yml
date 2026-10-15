@@ -37,6 +37,7 @@ jobs:
           node --check app/static/integrations.js
           node tests/js_smoke.js
           node tests/test_invoice_print.js
+          node tests/test_invoice_v54.js
           node tests/test_bank_catalog.js
 
   publish:

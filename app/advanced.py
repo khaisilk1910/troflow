@@ -412,11 +412,9 @@ def vietqr(ident:int,user=Depends(authorized)):
         if state['status']!='published':fail('Hãy chốt hóa đơn trước khi xuất VietQR.')
         result=_qr_details(con,ident)
         if not result['configured']:fail('Cơ sở chưa cấu hình tài khoản ngân hàng.')
-        transfer_note=f'TROFLOW HD{ident} {one(con,"SELECT period FROM invoices WHERE id=?",(ident,))["period"].replace("-","")}'
-        query=urllib.parse.urlencode({'amount':result['amount'],'addInfo':transfer_note,'accountName':result['holder']})
-        url=f'https://img.vietqr.io/image/{result["bank_code"]}-{result["account_number"]}-compact2.png?{query}'
-        return {'url':url,'amount':result['amount'],
-                'transfer_note':transfer_note,'bank_name':result['holder'],
+        # Return the same reference/QR as all other invoice views and Zalo images.
+        return {'url':result['qr_url'],'amount':result['amount'],
+                'transfer_note':result['content'],'bank_name':result['holder'],
                 'bank_code':result['bank_code'],'bank_account':result['account_number'],
                 'disclaimer':'QR chỉ tạo yêu cầu chuyển khoản, không xác nhận đã nhận tiền.'}
 
@@ -847,24 +845,41 @@ def pdf_document(title,subtitle,lines,footer='Tài liệu quản lý nội bộ 
 
 @router.get('/invoices/{ident}/pdf')
 def invoice_pdf(ident:int,user=Depends(authorized)):
+    """Private PDF from the same invoice image used for PNG and Zalo.
+
+    This keeps details, historical unit prices, services, QR and transfer note
+    consistent. Splits long invoices across A4 pages rather than shrinking text.
+    """
+    from .notify import _invoice, _invoice_png, _qr_details
+    from .invoice_format import invoice_lines
+    from PIL import Image as PILImage
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib.utils import ImageReader
     with connect() as con:
         right(user,invoice_property(con,ident),'view')
-        i=one(con,'''SELECT i.*,c.tenant_id,t.full_name tenant_name,r.code room_code,p.name property_name
-            FROM invoices i JOIN contracts c ON c.id=i.contract_id
-            JOIN tenants t ON t.id=c.tenant_id JOIN rooms r ON r.id=i.room_id
-            JOIN properties p ON p.id=r.property_id WHERE i.id=?''',(ident,))
-        paid=one(con,'SELECT COALESCE(SUM(amount),0) n FROM payments WHERE invoice_id=?',(ident,))['n']
-        lines=rows(con,'SELECT label,amount FROM invoice_lines WHERE invoice_id=?',(ident,))
-        if not lines:lines=[{'label':name,'amount':i[col]} for name,col in [('Tiền phòng','rent'),('Điện','electricity'),('Nước','water'),('Dịch vụ','services'),('Điều chỉnh','adjustment')]]
-        entries=[('Cơ sở',i['property_name']),('Phòng',i['room_code']),('Người thuê',i['tenant_name']),
-                 ('Kỳ',i['period']),('Trạng thái','Nháp' if i['status']=='draft' else 'Đã chốt'),
-                 ('Hạn thanh toán',i['due_date'])]
-        entries.extend((line['label'],f"{line['amount']:,} VND") for line in lines)
-        entries.extend([('Tổng hóa đơn',f"{i['total']:,} VND"),('Đã thanh toán',f'{paid:,} VND'),
-                        ('Còn nợ hóa đơn này',f"{i['total']-paid:,} VND"),
-                        ('Nợ kỳ trước (chỉ tham khảo, không cộng vào tổng)',f"{i['carried_debt']:,} VND")])
-        pdf=pdf_document(f'HÓA ĐƠN HD-{ident:05d}',f'TrọFlow • {i["period"]}',entries)
-    return Response(pdf,media_type='application/pdf',headers={'Content-Disposition':f'attachment; filename="troflow-invoice-{ident}.pdf"','Cache-Control':'no-store'})
+        invoice=_invoice(con,ident)
+        if not invoice:fail('Không tìm thấy hóa đơn.',404)
+        details=invoice_lines(con,ident)
+        qr=_qr_details(con,ident)
+    png=_invoice_png(invoice,qr,details)
+    source=PILImage.open(io.BytesIO(png)).convert('RGB')
+    buf=io.BytesIO()
+    pdf=canvas.Canvas(buf,pagesize=A4,pageCompression=1)
+    page_w,page_h=A4
+    margin=13*mm
+    out_w=page_w-2*margin
+    px_per_page=max(1,int((page_h-2*margin)*source.width/out_w))
+    for top in range(0,source.height,px_per_page):
+        cropped=source.crop((0,top,source.width,min(source.height,top+px_per_page)))
+        out_h=cropped.height*out_w/cropped.width
+        pdf.drawImage(ImageReader(cropped),margin,page_h-margin-out_h,width=out_w,height=out_h)
+        pdf.showPage()
+    pdf.save()
+    return Response(buf.getvalue(),media_type='application/pdf',headers={
+        'Content-Disposition':f'attachment; filename="HD{ident:05d}_{invoice["period"].replace("-","")}.pdf"',
+        'Cache-Control':'private, no-store'})
 
 @router.get('/handovers/{ident}/pdf')
 def handover_pdf(ident:int,user=Depends(authorized)):

@@ -77,3 +77,17 @@ svg{flex-shrink:0}.icon{width:18px;height:18px;stroke:currentColor;stroke-width:
 .invoice-bank-info small{display:block;margin-top:6px;color:#718598;font-size:10px}
 @media(max-width:600px){.invoice-bank{grid-template-columns:100px 1fr;padding:10px;gap:8px}.invoice-bank-qr img{width:100px;height:100px}.invoice-bank-info{font-size:11px}}
 @media print{#print-root .invoice-bank{background:#f2faf8!important;print-color-adjust:exact;-webkit-print-color-adjust:exact}#print-root .invoice-bank-qr img{width:125px;height:125px}}
+
+/* V5.4: invoice detail and printed invoice share the exact same monetary breakdown. */
+.invoice-head-status .status-unpaid{background:#fff0f1;color:#c52b43;border:1px solid #ffced3}
+.invoice-meter-detail{font-size:11px;line-height:1.65;color:#61748b;margin-top:5px;font-weight:450;overflow-wrap:anywhere}
+.invoice-meter-detail strong{color:#152b44;font-weight:800}
+.invoice-table tr{break-inside:avoid}
+.invoice-bank-info div{overflow-wrap:anywhere}
+@media print{
+ #print-root .invoice-head-status .status-unpaid{background:#fff0f1!important;color:#c52b43!important;print-color-adjust:exact;-webkit-print-color-adjust:exact}
+ #print-root .invoice-meter-detail{font-size:10px}
+ #print-root .invoice-table td{padding:9px 0}
+ #print-root .invoice-bank-info div{overflow-wrap:anywhere}
+}
+@media(max-width:600px){.invoice-head{gap:9px}.modal-footer{flex-wrap:wrap}}

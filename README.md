@@ -1,3 +1,7 @@
+# TrọFlow 5.4 — Hóa đơn chi tiết, PNG, Zalo
+
+Xem [README-V5.4.md](README-V5.4.md) để biết thay đổi, triển khai và kiểm thử.
+
 > **Cập nhật V5.1 (mẫu hóa đơn chi tiết và in A4):** xem [README-V5.1.md](README-V5.1.md). Không thay đổi database.
 
 # TrọFlow 5.0

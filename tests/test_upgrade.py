@@ -79,7 +79,7 @@ class UpgradeTests(unittest.TestCase):
         self.assertEqual(self.req('GET',f'v2/invoices/{inv_id}/pdf').headers['content-type'],'application/pdf')
         self.req('PUT',f'v2/properties/{pid}/bank',{'bank_code':'VCB','bank_account':'1234567890','bank_name':'CHU TRO'})
         qr=self.req('GET',f'v2/invoices/{inv_id}/vietqr').json()
-        self.assertEqual(qr['transfer_note'],f'TROFLOW HD{inv_id} {self.month.replace("-","")}')
+        self.assertEqual(qr['transfer_note'],f'NGUYENMINHANH-101-0900000000 HD{inv_id:05d} {self.month.replace("-","")}')
         self.assertIn('img.vietqr.io',qr['url'])
         self.req('POST','v2/handovers',{'contract_id':cid,'handover_type':'checkin','handover_on':self.today,'description':'Đầy đủ'})
         self.req('POST','v2/handovers',{'contract_id':cid,'handover_type':'checkout','handover_on':self.today,'damage_amount':200000,'refund_amount':2800000,'ack_debt':True})

@@ -100,7 +100,7 @@ class V6Tests(unittest.TestCase):
    self.assertEqual(notify.process_outbox(),4)
    self.assertEqual(sender.call_count,4)
    endpoints=[call.args[3] for call in sender.call_args_list]
-   self.assertEqual(sum(v is not None for v in endpoints),2)
+   self.assertEqual(sum(v is not None for v in endpoints),4)
   self.assertTrue(all(x['status']=='sent' for x in self.call('GET','v6/zalo/outbox')))
   self.call('DELETE',f'v6/zalo/destinations/{dest_id}')
   self.assertEqual(len(self.call('GET','v6/zalo/destinations')),1)

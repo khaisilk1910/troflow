@@ -345,14 +345,34 @@ function openGenerate(){
 function openPassword(){modalContext={type:'password'};openModal('Đổi mật khẩu',`<form id="password-form"><div class="field"><label>Mật khẩu hiện tại</label><input type="password" name="current_password" autocomplete="current-password" required></div><div class="field"><label>Mật khẩu mới</label><input type="password" name="new_password" minlength="10" maxlength="128" autocomplete="new-password" required></div><p class="meta-note">Sau khi đổi mật khẩu bạn sẽ được đăng xuất khỏi tất cả các thiết bị.</p></form>`,`<button class="btn btn-outline" data-action="close-modal">Hủy</button><button class="btn btn-primary" type="submit" form="password-form">Cập nhật mật khẩu</button>`);}
 // Render once for both the on-screen invoice and the browser print view.
 // All customer/property fields are escaped because invoice data comes from users.
-function renderInvoicePaper(x,bank){
+function renderInvoicePaper(x,bank,invoiceLines=[]){
  const meterValue=v=>Number.isFinite(Number(v))&&v!==null?Number(v).toLocaleString('vi-VN',{maximumFractionDigits:3}):'—';
- const lines=[['Tiền thuê phòng',x.rent],['Tiền điện ('+meterValue(x.electric_old)+' → '+meterValue(x.electric_new)+' kWh; tiêu thụ '+meterValue(x.electric_usage)+' kWh)',x.electricity],['Tiền nước ('+meterValue(x.water_old)+' → '+meterValue(x.water_new)+' m³; tiêu thụ '+meterValue(x.water_usage)+' m³)',x.water],['Phí dịch vụ',x.services],...(x.adjustment?[['Điều chỉnh',x.adjustment]]:[])];
+ const unitRate=(code,amountKey,usageKey)=>{
+   const saved=invoiceLines.find(line=>line.code===code);
+   if(saved)return {value:Number(saved.unit_price),estimated:false};
+   const usage=Number(x[usageKey]||0);
+   return usage>0?{value:Math.round(Number(x[amountKey]||0)/usage),estimated:true}:null;
+ };
+ const serviceRows=invoiceLines.filter(row=>['service','base_service'].includes(row.code));
+ const validServiceRows=serviceRows.length&&Math.round(serviceRows.reduce((n,row)=>n+Number(row.amount||0),0))===Number(x.services||0);
+ const rows=[{label:'Tiền thuê phòng',value:x.rent}];
+ for(const [code,caption,amountKey,oldKey,newKey,usageKey,unit] of [
+   ['electric','Tiền điện','electricity','electric_old','electric_new','electric_usage','kWh'],
+   ['water','Tiền nước','water','water_old','water_new','water_usage','m³']]){
+   const rate=unitRate(code,amountKey,usageKey);
+   const note=rate?` · ${rate.estimated?'Đơn giá quy đổi':'Đơn giá'}: <strong>${amount(rate.value)}/${unit}</strong>`:'';
+   rows.push({label:`${caption}<div class="invoice-meter-detail">Chỉ số cũ: <strong>${meterValue(x[oldKey])}</strong> → Chỉ số mới: <strong>${meterValue(x[newKey])}</strong> · Tiêu thụ: <strong>${meterValue(x[usageKey])} ${unit}</strong>${note}</div>`,value:x[amountKey],safe:true});
+ }
+ if(validServiceRows){
+   for(const item of serviceRows)rows.push({label:`${esc(item.label)}<div class="invoice-meter-detail">${meterValue(item.quantity)} × <strong>${amount(item.unit_price)}</strong></div>`,value:item.amount,safe:true});
+ }else rows.push({label:'Phí dịch vụ',value:x.services});
+ if(x.adjustment)rows.push({label:'Điều chỉnh',value:x.adjustment});
  const property=esc(x.property_name||'Cơ sở / Tòa nhà');
+ const status=invoiceStatus(x);
  return `<article class="invoice-paper">
   <div class="invoice-head">
    <div><div class="eyebrow">PHIẾU THU / HÓA ĐƠN NỘI BỘ</div><h2>HÓA ĐƠN TIỀN PHÒNG</h2><span class="muted">${monthVN(x.period)} · Mã HD-${String(x.id).padStart(5,'0')}</span></div>
-   <div class="invoice-head-status">${badge(invoiceStatus(x))}<p class="muted">Hạn thu ${dateVN(x.due_date)}</p></div>
+   <div class="invoice-head-status">${badge(status)}</div>
   </div>
   <div class="invoice-info"><div class="invoice-property"><strong>${property}</strong>${x.property_address?`<div>${esc(x.property_address)}</div>`:''}</div>
    <div class="invoice-tenant-highlight" aria-label="Thông tin khách thuê">
@@ -363,10 +383,10 @@ function renderInvoicePaper(x,bank){
     <span>Số điện thoại: <strong>${esc(x.tenant_phone||'—')}</strong></span>
    </div>
   </div>
-  <table class="invoice-table"><tbody>${lines.map(([title,v])=>`<tr><td>${esc(title)}</td><td>${amount(v)}</td></tr>`).join('')}</tbody></table>
+  <table class="invoice-table"><tbody>${rows.map(r=>`<tr><td>${r.safe?r.label:esc(r.label)}</td><td>${amount(r.value)}</td></tr>`).join('')}</tbody></table>
   <div class="invoice-total"><span>TỔNG CỘNG</span><span>${amount(x.total)}</span></div>
   <div class="invoice-sum invoice-sum-paid"><span>Đã thanh toán</span><strong class="positive">${amount(x.paid)}</strong></div>
-  <div class="invoice-sum invoice-sum-balance"><span>Số dư cần thanh toán</span><strong class="${x.balance?'negative':''}">${amount(x.balance)}</strong></div>
+  <div class="invoice-sum invoice-sum-balance"><span>Tổng tiền phải thanh toán</span><strong class="${x.balance?'negative':''}">${amount(x.balance)}</strong></div>
   ${bank?.configured?`<section class="invoice-bank" aria-label="Thông tin chuyển khoản">
     <div class="invoice-bank-qr"><img loading="eager" src="${esc(bank.qr_url)}" alt="Mã QR chuyển khoản ngân hàng"></div>
     <div class="invoice-bank-info"><strong>THANH TOÁN CHUYỂN KHOẢN</strong>
@@ -381,10 +401,28 @@ function renderInvoicePaper(x,bank){
  </article>`;
 }
 async function openInvoice(id){const x=state.data.invoices.find(v=>v.id===num(id));if(!x)return;
- let bank=null;try{bank=await api('v6/invoices/'+x.id+'/payment-qr')}catch(err){console.warn('QR unavailable:',err.message)}
- const detail=renderInvoicePaper(x,bank);
+ let bank=null,lines=[];
+ // Snapshot from invoice_lines avoids replacing historical prices by current facility rates.
+ try{[bank,lines]=await Promise.all([api('v6/invoices/'+x.id+'/payment-qr'),api('v2/invoices/'+x.id+'/lines')]);}
+ catch(err){console.warn('Invoice detail fallback:',err.message);
+   try{bank=await api('v6/invoices/'+x.id+'/payment-qr')}catch(e){}
+   try{lines=await api('v2/invoices/'+x.id+'/lines')}catch(e){}
+ }
+ const detail=renderInvoicePaper(x,bank,Array.isArray(lines)?lines:[]);
  modalContext={type:'invoice',id};$('#print-root').innerHTML=detail;
- openModal('Chi tiết hóa đơn',detail,`<button class="btn btn-outline" data-action="close-modal">Đóng</button><button class="btn btn-outline" data-action="print">${ic('print')} In hóa đơn</button>${x.balance>0?`<button class="btn btn-primary" data-pay="${x.id}">${ic('wallet')} Thu tiền</button>`:''}`,true);
+ openModal('Chi tiết hóa đơn',detail,`<button class="btn btn-outline" data-action="close-modal">Đóng</button><button class="btn btn-outline" data-action="print">${ic('print')} In hóa đơn</button><button class="btn btn-outline" data-action="download-invoice-png">${ic('download')} Lưu ảnh PNG</button>${x.balance>0?`<button class="btn btn-primary" data-pay="${x.id}">${ic('wallet')} Thu tiền</button>`:''}`,true);
+}
+async function downloadInvoicePNG(id){
+ if(busy)return;busy=true;
+ try{
+  const response=await fetch(`/api/v6/invoices/${encodeURIComponent(id)}/image.png`,{credentials:'same-origin',cache:'no-store'});
+  if(!response.ok){const detail=await response.json().catch(()=>({}));throw Error(detail.detail||'Không tải được ảnh hóa đơn.');}
+  const blob=await response.blob();if(!blob.type.startsWith('image/png'))throw Error('Máy chủ trả về dữ liệu ảnh không hợp lệ.');
+  const url=URL.createObjectURL(blob);
+  try{const link=document.createElement('a');link.href=url;link.download=`Hoa-don-HD${String(id).padStart(5,'0')}.png`;document.body.appendChild(link);link.click();link.remove();}
+  finally{setTimeout(()=>URL.revokeObjectURL(url),1000);}
+  toast('Đã tải ảnh hóa đơn PNG.');
+ }catch(err){toast(err.message,true);}finally{busy=false;}
 }
 function openConfirm(title,body,cb){confirmAction=cb;modalContext={type:'confirm'};
  openModal(title,`<div class="confirm-copy">${esc(body)}</div>`,`<button class="btn btn-outline" data-action="close-modal">Hủy</button><button class="btn btn-danger" data-action="confirm">${ic('check')} Xác nhận</button>`);
@@ -447,6 +485,7 @@ document.addEventListener('click',async e=>{
  if(a==='menu'){state.sidebar=!state.sidebar;$('#sidebar')?.classList.toggle('open',state.sidebar);$('#side-overlay')?.classList.toggle('show',state.sidebar);return;}
  if(a==='confirm'){const task=confirmAction;if(task)await task();return;}
  if(a==='print'){window.print();return;}
+ if(a==='download-invoice-png'){if(modalContext?.type==='invoice')await downloadInvoicePNG(modalContext.id);return;}
  }
  if(e.target.id==='side-overlay')closeMenu();
 });
