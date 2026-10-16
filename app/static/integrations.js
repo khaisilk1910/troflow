@@ -1,8 +1,15 @@
 'use strict';
-const root=document.getElementById('ui');let csrf='',banks=[],dest=[],props=[],tenants=[],logs=[],config={},bankCatalog={banks:[],count:0};
+const root=document.getElementById('ui');let csrf='',banks=[],dest=[],props=[],tenants=[],logs=[],config={},connection=null,bankCatalog={banks:[],count:0};
 const page=new URLSearchParams(location.search).get('page')==='banks'?'banks':'zalo';
 const E=x=>String(x??'').replace(/[&<>"']/g,v=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[v]));
-const req=async(path,method='GET',data)=>{const res=await fetch('/api/'+path,{method,credentials:'same-origin',headers:{...(method==='GET'?{}:{'Content-Type':'application/json','X-CSRF-Token':csrf})},body:data===undefined?undefined:JSON.stringify(data)});const j=await res.json().catch(()=>({}));if(!res.ok)throw Error(j.detail||'Yêu cầu bị từ chối.');return j};
+const req=async(path,method='GET',data)=>{
+ let res;
+ try{res=await fetch('/api/'+path,{method,credentials:'same-origin',headers:{'Accept':'application/json',...(method==='GET'?{}:{'Content-Type':'application/json','X-CSRF-Token':csrf})},body:data===undefined?undefined:JSON.stringify(data)});}
+ catch{throw Error('Không kết nối được TroFlow API. Kiểm tra mạng LAN/Cloudflare Tunnel và máy chủ TroFlow, sau đó thử lại. Đây chưa phải kết quả kết nối Zalo Bot.');}
+ const j=await res.json().catch(()=>({}));
+ if(!res.ok)throw Error(j.detail||`TroFlow API trả về HTTP ${res.status}. Vui lòng đăng nhập lại hoặc kiểm tra nhật ký máy chủ.`);
+ return j;
+};
 const flash=(msg,bad=false)=>{const n=document.getElementById('flash');n.textContent=msg;n.style.display='block';n.style.background=bad?'#a63d52':'#18344b';setTimeout(()=>{n.style.display='none'},4500)};
 const btn=(label,attrs='',cls='')=>`<button class="btn ${cls}" ${attrs}>${E(label)}</button>`;
 const field=(label,name,value='',type='text',extra='')=>`<label class="field">${E(label)}<input name="${E(name)}" type="${type}" value="${E(value)}" ${extra}></label>`;
@@ -15,7 +22,7 @@ const close=()=>document.getElementById('overlay')?.remove();
 async function run(fn){try{await fn()}catch(e){flash(e.message,true)}}
 async function reload(){const me=await req('auth/me');if(me.user.role!=='admin'){root.textContent='Chỉ quản trị viên được truy cập cấu hình.';return}csrf=me.csrf;
  [props,tenants]=await Promise.all([req('properties'),req('tenants')]);
- if(page==='banks'){[banks,bankCatalog]=await Promise.all([req('v6/banks'),req('v6/bank-catalog')]);renderBanks()}else{[dest,config,logs]=await Promise.all([req('v6/zalo/destinations'),req('v6/zalo/settings'),req('v6/zalo/outbox')]);renderZalo()}}
+ if(page==='banks'){[banks,bankCatalog]=await Promise.all([req('v6/banks'),req('v6/bank-catalog')]);renderBanks()}else{[dest,config,logs]=await Promise.all([req('v6/zalo/destinations'),req('v6/zalo/settings'),req('v6/zalo/outbox')]);renderZalo();await refreshZaloConnection()}}
 function renderBanks(){root.innerHTML=`<div class="top"><div><div class="eyebrow">TRỌFLOW / TÀI CHÍNH</div><h1>Tài khoản ngân hàng & QR</h1><p class="muted">Quản lý nhiều tài khoản theo cơ sở. Hóa đơn ưu tiên tài khoản mặc định đang bật.</p></div><div class="actions">${btn('↻ Cập nhật danh sách VietQR','data-action="bank-catalog-refresh"')}${btn('+ Thêm tài khoản','data-action="bank-add"','primary')}</div></div>
  <div class="card"><div class="table-wrap"><table><thead><tr><th>Cơ sở</th><th>Ngân hàng</th><th>Chủ tài khoản</th><th>Số tài khoản</th><th>Trạng thái</th><th>Thao tác</th></tr></thead><tbody>${banks.map(b=>`<tr><td><strong>${E(b.property_name)}</strong></td><td>${E(b.bank_name)}<br><small>${E(b.bank_code)}</small></td><td>${E(b.holder)}</td><td><strong>${E(b.account_number)}</strong></td><td><span class="tag ${b.active?'':'off'}">${b.active?(b.is_default?'Mặc định':'Đang dùng'):'Đã tắt'}</span></td><td><div class="actions">${btn('Xem QR',`data-action="bank-preview" data-id="${b.id}"`,'small-btn')}${btn('Sửa',`data-action="bank-edit" data-id="${b.id}"`,'small-btn')}${btn('Xóa',`data-action="bank-delete" data-id="${b.id}"`,'danger small-btn')}</div></td></tr>`).join('')}</tbody></table></div>${banks.length?'':'<p class="muted">Chưa có tài khoản. Nhấn “Thêm tài khoản”.</p>'}</div><p class="hint">Danh mục ${bankCatalog.count} ngân hàng/đơn vị từ <a href="https://www.vietqr.io/api-bank" target="_blank" rel="noopener noreferrer">VietQR</a> (cập nhật ${E(bankCatalog.retrieved_on||'đang dùng bản tích hợp')}). Trường “Hỗ trợ quét” phản ánh khả năng ứng dụng ngân hàng gửi tiền bằng cách quét QR, không đảm bảo mọi tài khoản đều nhận được tiền qua VietQR.</p><p class="hint">VietQR là mã chuyển khoản; không đồng nghĩa giao dịch đã được ngân hàng xác nhận. Chỉ ghi nhận “đã thu” khi đối soát thực tế.</p>`}
 function previewBank(id){const b=banks.find(x=>x.id===id);if(!b)return;
@@ -73,23 +80,71 @@ document.addEventListener('input',event=>{
 document.addEventListener('change',event=>{
  if(event.target.id==='bank-picker')updateBankFields(event.target.value);
 });
+const deliveryLabels={sent:'Đã gửi',failed:'Gửi thất bại',pending:'Chờ gửi',sending:'Đang gửi'};
+function paintZaloConnection(){
+ const target=document.getElementById('zalo-connection-status');if(!target)return;
+ const state=connection?.status||'checking';
+ const title={connected:'Đã kết nối Zalo Bot Server',auth_failed:'Sai tài khoản hoặc mật khẩu bot',unreachable:'Không liên lạc được Bot Server',server_error:'Bot Server phản hồi lỗi',no_credentials:'Chưa thiết lập mật khẩu bot',credentials_error:'Không đọc được thông tin đăng nhập',not_configured:'Thiếu thông tin cấu hình',checking:'Đang kiểm tra kết nối'}[state]||'Chưa kết nối';
+ const detail=connection?.message||'TroFlow đang kết nối trực tiếp tới Bot Server để kiểm tra đăng nhập...';
+ target.className='connection-state '+(state==='connected'?'is-connected':state==='checking'?'is-checking':'is-disconnected');
+ target.innerHTML=`<div class="connection-head"><span class="connection-dot" aria-hidden="true"></span><strong>${E(title)}</strong></div><p>${E(detail)}</p>${state==='connected'&&!config.enabled?'<p class="connection-warning">Bot đăng nhập được nhưng tính năng gửi thông báo đang tắt.</p>':''}${connection?.checked_at?`<small>Kiểm tra: ${E(new Date(connection.checked_at).toLocaleString('vi-VN'))}</small>`:''}`;
+}
+async function refreshZaloConnection(){
+ connection=null;paintZaloConnection();
+ try{connection=await req('v6/zalo/connection');paintZaloConnection();}
+ catch(e){connection={status:'unreachable',message:e.message};paintZaloConnection();}
+}
+async function watchWelcome(id,attempt=0){
+ if(!id)return;
+ try{
+  const notice=await req(`v6/zalo/outbox/${id}/status`);
+  if(notice.status==='sent'){flash('Đã gửi tin nhắn xác nhận thêm nơi nhận qua Zalo.');await reloadWithoutConnection();return;}
+  if(notice.status==='failed'){flash('Đã lưu nơi nhận nhưng gửi Zalo thất bại: '+(notice.error||'Kiểm tra nhật ký thông báo.'),true);await reloadWithoutConnection();return;}
+  if(attempt<12){setTimeout(()=>watchWelcome(id,attempt+1),2000);return;}
+  flash('Đã lưu nơi nhận. Tin xác nhận vẫn đang xử lý; xem Nhật ký thông báo.');
+ }catch(e){flash('Đã lưu nơi nhận nhưng chưa đọc được trạng thái gửi: '+e.message,true);}
+}
+async function reloadWithoutConnection(){
+ if(page!=='zalo')return;
+ [dest,logs]=await Promise.all([req('v6/zalo/destinations'),req('v6/zalo/outbox')]);
+ renderZalo();paintZaloConnection();
+}
 function renderZalo(){root.innerHTML=`<div class="top"><div><div class="eyebrow">TRỌFLOW / TÍCH HỢP</div><h1>Thông báo Zalo</h1><p class="muted">Kết nối Zalo Bot Server đang chạy trên Ubuntu · Quản lý người nhận và nhật ký gửi</p></div><span class="tag ${config.enabled?'':'off'}">${config.enabled?'● Đang bật':'○ Đang tắt'}</span></div>
- <div class="card"><div class="top"><div><h2>Kết nối Zalo Bot Server</h2><p class="hint">Đăng nhập bằng session qua API của bot; thông tin mật khẩu không bao giờ được trả về giao diện.</p></div>${btn('Lưu cấu hình','type="submit" form="config-form"','primary')}</div><form id="config-form"><div class="grid">${field('Địa chỉ bot trên server','bot_url',config.bot_url,'url','required')}${field('Zalo ownId hoặc số điện thoại account đã đăng nhập','account_selection',config.account_selection||'','text','required')}${field('URL nội bộ TroFlow để bot tải ảnh','media_url',config.media_url||'','url','required')}${field('Username quản trị Zalo Bot','username',config.username||'','text','autocomplete="off"')}${field('Mật khẩu bot (để trống nếu giữ nguyên)','password','','password','autocomplete="new-password"')}</div><div class="checks">${ck('Bật gửi thông báo','enabled',config.enabled)}${ck('Gửi khi phát hành hóa đơn','invoice_enabled',config.invoice_enabled)}${ck('Gửi khi thu tiền','payment_enabled',config.payment_enabled)}${ck('Gửi yêu cầu sửa chữa của khách thuê cho chủ nhà','ticket_enabled',config.ticket_enabled)}</div><div class="hint">Trạng thái thông tin đăng nhập: <b>${config.credentials_configured?'Đã cấu hình':'Chưa cấu hình'}</b>${config.environment_credentials?' (qua biến môi trường)':''}. Bot sử dụng API <code>sendMessageByAccount</code> / <code>sendImageByAccount</code>. Gửi ảnh cần URL nội bộ hai chiều có thể truy cập.</div></form></div>
+ <div class="card"><div class="top"><div><h2>Kết nối Zalo Bot Server</h2><p class="hint">Trạng thái kiểm tra từ chính máy chủ TroFlow tới Bot Server qua API /api/login, không chỉ dựa vào việc lưu cấu hình.</p></div><div class="actions">${btn('↻ Kiểm tra kết nối','type="button" data-action="connection-check"')}${btn('Lưu & kiểm tra','type="submit" form="config-form"','primary')}</div></div><div id="zalo-connection-status" class="connection-state is-checking" role="status" aria-live="polite"></div><form id="config-form"><div class="grid">${field('Địa chỉ bot trên server','bot_url',config.bot_url,'url','required')}${field('Zalo ownId hoặc số điện thoại account đã đăng nhập','account_selection',config.account_selection||'','text','required')}${field('URL nội bộ TroFlow để bot tải ảnh','media_url',config.media_url||'','url','required')}${field('Username quản trị Zalo Bot','username',config.username||'','text','autocomplete="off"')}${field('Mật khẩu bot (để trống nếu giữ nguyên)','password','','password','autocomplete="new-password"')}</div><div class="checks">${ck('Bật gửi thông báo','enabled',config.enabled)}${ck('Gửi khi phát hành hóa đơn','invoice_enabled',config.invoice_enabled)}${ck('Gửi khi thu tiền','payment_enabled',config.payment_enabled)}${ck('Gửi yêu cầu sửa chữa của khách thuê cho chủ nhà','ticket_enabled',config.ticket_enabled)}</div><div class="hint">Trạng thái thông tin đăng nhập: <b>${config.credentials_configured?'Đã cấu hình':'Chưa cấu hình'}</b>${config.environment_credentials?' (qua biến môi trường)':''}. Bot sử dụng API <code>sendMessageByAccount</code> / <code>sendImageByAccount</code>. Gửi ảnh cần URL nội bộ hai chiều có thể truy cập.</div></form></div>
  <div class="card"><div class="top"><div><h2>Danh sách nơi nhận</h2><p class="hint">User hoặc nhóm Zalo, có thể gắn với khách thuê và cơ sở.</p></div>${btn('+ Nơi nhận chủ nhà','data-action="dest-owner-add"','primary')}${btn('+ Thêm nơi nhận khác','data-action="dest-add"')}</div>
- ${dest.length?dest.map(d=>`<div class="row"><div><strong>${E(d.name)} <span class="tag ${d.enabled?'':'off'}">${d.enabled?'Bật':'Tắt'}</span></strong><small>${d.kind==='group'?'Nhóm':'Người dùng'} · ID: ${E(d.thread_id)}${d.tenant_name?' · Khách: '+E(d.tenant_name):''}${d.property_name?' · '+E(d.property_name):''}<br>Hóa đơn: ${d.on_invoice?'Có':'Không'} · Thu tiền: ${d.on_payment?'Có':'Không'} · Sửa chữa cho chủ: ${d.on_ticket?'Có':'Không'}</small></div><div class="actions">${btn(d.enabled?'Tắt nhanh':'Bật nhanh',`data-action="dest-toggle" data-id="${d.id}"`,'small-btn')}${btn('Gửi',`data-action="send" data-id="${d.id}"`,'small-btn primary')}${btn('Sửa',`data-action="dest-edit" data-id="${d.id}"`,'small-btn')}${btn('Xóa',`data-action="dest-delete" data-id="${d.id}"`,'danger small-btn')}</div></div>`).join(''):'<p class="muted">Chưa thêm nơi nhận.</p>'}</div>
- <div class="card"><div class="top"><div><h2>Nhật ký thông báo</h2><p class="hint">Đã gửi, đang chờ hoặc thất bại; có thể gửi lại thủ công khi lỗi.</p></div>${btn('Làm mới','data-action="reload"')}</div><div class="table-wrap"><table><thead><tr><th>ID</th><th>Nơi nhận</th><th>Nội dung</th><th>Trạng thái</th><th>Thời điểm</th><th></th></tr></thead><tbody>${logs.map(l=>`<tr><td>${l.id}</td><td>${E(l.destination_name||'Đã xóa nơi nhận')}</td><td><span class="break">${E(l.message.slice(0,150))}</span>${l.error?`<p class="error">${E(l.error)}</p>`:''}</td><td><span class="tag ${l.status==='sent'?'':'off'}">${E(l.status)}</span></td><td>${E(l.sent_at||l.created_at)}</td><td>${l.status==='failed'?btn('Gửi lại',`data-action="retry" data-id="${l.id}"`,'small-btn'):''}</td></tr>`).join('')}</tbody></table></div>${logs.length?'':'<p class="muted">Chưa có thông báo.</p>'}</div><div class="warn">Zalo Bot Server sử dụng API Zalo cá nhân không chính thức; có thể bị gián đoạn hoặc ảnh hưởng phiên đăng nhập khi Zalo thay đổi. Chỉ gửi cho người đã đồng ý nhận thông báo, không dùng để gửi hàng loạt tin nhắn không mong muốn.</div>`}
+ ${dest.length?dest.map(d=>`<div class="row"><div><strong>${E(d.name)} <span class="tag ${d.enabled?'':'off'}">${d.enabled?'Bật':'Tắt'}</span>${d.welcome_status?` <span class="tag ${d.welcome_status==='sent'?'':d.welcome_status==='failed'?'status-failed':'off'}">Xác nhận: ${E(deliveryLabels[d.welcome_status]||d.welcome_status)}</span>`:''}</strong><small>${d.kind==='group'?'Nhóm':'Người dùng'} · ID: ${E(d.thread_id)}${d.tenant_name?' · Khách: '+E(d.tenant_name):''}${d.property_name?' · '+E(d.property_name):''}<br>Hóa đơn: ${d.on_invoice?'Có':'Không'} · Thu tiền: ${d.on_payment?'Có':'Không'} · Sửa chữa cho chủ: ${d.on_ticket?'Có':'Không'}</small></div><div class="actions">${btn(d.enabled?'Tắt nhanh':'Bật nhanh',`data-action="dest-toggle" data-id="${d.id}"`,'small-btn')}${btn('Gửi',`data-action="send" data-id="${d.id}"`,'small-btn primary')}${btn('Sửa',`data-action="dest-edit" data-id="${d.id}"`,'small-btn')}${btn('Xóa',`data-action="dest-delete" data-id="${d.id}"`,'danger small-btn')}</div></div>`).join(''):'<p class="muted">Chưa thêm nơi nhận.</p>'}</div>
+ <div class="card"><div class="top"><div><h2>Nhật ký thông báo</h2><p class="hint">Đã gửi, đang chờ hoặc thất bại; có thể gửi lại thủ công khi lỗi.</p></div>${btn('Làm mới','data-action="reload"')}</div><div class="table-wrap"><table><thead><tr><th>ID</th><th>Nơi nhận</th><th>Nội dung</th><th>Trạng thái</th><th>Thời điểm</th><th></th></tr></thead><tbody>${logs.map(l=>`<tr><td>${l.id}</td><td>${E(l.destination_name||'Đã xóa nơi nhận')}</td><td><span class="break">${E(l.message.slice(0,150))}</span>${l.error?`<p class="error">${E(l.error)}</p>`:''}</td><td><span class="tag ${l.status==='sent'?'':l.status==='failed'?'status-failed':'off'}">${E(deliveryLabels[l.status]||l.status)}</span></td><td>${E(l.sent_at||l.created_at)}</td><td>${l.status==='failed'?btn('Gửi lại',`data-action="retry" data-id="${l.id}"`,'small-btn'):''}</td></tr>`).join('')}</tbody></table></div>${logs.length?'':'<p class="muted">Chưa có thông báo.</p>'}</div><div class="warn">Zalo Bot Server sử dụng API Zalo cá nhân không chính thức; có thể bị gián đoạn hoặc ảnh hưởng phiên đăng nhập khi Zalo thay đổi. Chỉ gửi cho người đã đồng ý nhận thông báo, không dùng để gửi hàng loạt tin nhắn không mong muốn.</div>`}
 function editDest(id,ownerOnly=false){const d=dest.find(x=>x.id===id)||{kind:'user',enabled:1,on_invoice:0,on_payment:0,on_ticket:1};backdrop(`<header><h2>${id?'Sửa':'Thêm'} nơi nhận Zalo</h2>${btn('✕','data-action="close"')}</header><form id="dest-form" data-id="${id||''}"><div class="grid">${field('Tên nơi nhận','name',d.name||'','text','required maxlength="120"')}${select('Loại','kind',d.kind,[['user','User'],['group','Nhóm']])}${field('ID Zalo (threadId / groupId, dạng số)','thread_id',d.thread_id||'','text','required inputmode="numeric"')}${ownerOnly?'<input type="hidden" name="tenant_id" value=""><p class="hint">Nơi nhận chủ nhà, không gắn tài khoản khách thuê.</p>':select('Khách thuê liên kết (nếu có)','tenant_id',d.tenant_id||'',[['','Không gắn khách thuê'],...tenants.map(x=>[x.id,x.full_name+' · '+(x.phone||'')])])}${select('Cơ sở giới hạn (nếu có)','property_id',d.property_id||'',[['','Tất cả cơ sở'],...opts(props)])}</div><div class="checks">${ck('Bật nơi nhận','enabled',d.enabled)}${ck('Thông báo hóa đơn','on_invoice',d.on_invoice)}${ck('Thông báo thu tiền','on_payment',d.on_payment)}${ck('Nhận yêu cầu sửa chữa gửi cho chủ (chỉ nơi nhận không gắn khách thuê)','on_ticket',d.on_ticket)}</div><div class="actions">${btn('Hủy','data-action="close" type="button"')}${btn('Lưu nơi nhận','type="submit"','primary')}</div></form><div class="warn">Dùng Zalo UserID/GroupID từ Zalo Bot Server, <b>không dùng số điện thoại khách thuê làm threadId</b>. Tên và số điện thoại chỉ để dễ nhận biết.</div>`)}
 function sendDialog(id){const d=dest.find(x=>x.id===id);backdrop(`<header><h2>Gửi thông báo · ${E(d?.name)}</h2>${btn('✕','data-action="close"')}</header><form id="send-form"><input name="destination_id" type="hidden" value="${id}">${select('Hóa đơn đính kèm (nếu có)','invoice_id','',[['','Không đính kèm'],...(window.availableInvoices||[]).map(x=>[x.id,`HD-${x.id} · ${x.tenant_name} · ${x.period}`])])}<label class="field">Nội dung gửi<textarea name="message" rows="5" required maxlength="1800" placeholder="Xin chào, thông báo từ nhà trọ..."></textarea></label><div class="checks">${ck('Gửi kèm ảnh hóa đơn nếu đã chọn hóa đơn','include_image',true)}</div><div class="actions">${btn('Hủy','type="button" data-action="close"')}${btn('Đưa vào hàng đợi gửi','type="submit"','primary')}</div></form>`)}
 
 document.addEventListener('submit',e=>{const f=e.target;if(!['bank-form','config-form','dest-form','send-form'].includes(f.id))return;e.preventDefault();run(async()=>{const data=formdata(f);for(const check of f.querySelectorAll('input[type=checkbox]'))data[check.name]=check.checked?1:0;
  if(f.id==='bank-form'){const id=f.dataset.id;await req('v6/banks'+(id?'/'+id:''),id?'PUT':'POST',data)}
- if(f.id==='config-form')await req('v6/zalo/settings','PUT',data);
- if(f.id==='dest-form'){const id=f.dataset.id;await req('v6/zalo/destinations'+(id?'/'+id:''),id?'PUT':'POST',data)}
+ let message='Đã lưu thông tin.';let welcomeId=null;let checkedConnection=null;
+ if(f.id==='config-form'){
+  const result=await req('v6/zalo/settings','PUT',data);
+  checkedConnection=result.connection;
+  message=checkedConnection?.connected?'Đã lưu cấu hình và kết nối được Bot Server.':'Đã lưu cấu hình nhưng Bot Server chưa kết nối: '+(checkedConnection?.message||'Kiểm tra lại.');
+ }
+ if(f.id==='dest-form'){
+  const id=f.dataset.id;
+  const result=await req('v6/zalo/destinations'+(id?'/'+id:''),id?'PUT':'POST',data);
+  if(!id){
+   welcomeId=result.welcome_notification_id;
+   message=result.welcome_status==='pending'?'Đã lưu nơi nhận. Đang gửi tin nhắn xác nhận qua Zalo...':result.welcome_status==='failed'?'Đã lưu nơi nhận nhưng chưa thể gửi xác nhận: kênh Zalo đang tắt.':'Đã lưu nơi nhận (nơi nhận đang tắt nên không gửi xác nhận).';
+  }
+ }
  if(f.id==='send-form'){data.destination_id=Number(data.destination_id);if(data.invoice_id)data.invoice_id=Number(data.invoice_id);await req('v6/zalo/send','POST',data)}
- close();await reload();flash('Đã lưu. Thông báo được đưa vào hàng đợi nếu có yêu cầu gửi.');});});
+ close();
+ if(f.id==='config-form'){
+  [dest,config,logs]=await Promise.all([req('v6/zalo/destinations'),req('v6/zalo/settings'),req('v6/zalo/outbox')]);
+  connection=checkedConnection;renderZalo();paintZaloConnection();
+ }else if(page==='zalo'){await reloadWithoutConnection();}else{await reload();}
+ flash(message,f.id==='config-form'&&!checkedConnection?.connected);
+ if(welcomeId&&message.includes('Đang gửi'))watchWelcome(welcomeId);});});
 document.addEventListener('click',e=>{const el=e.target.closest('[data-action]');if(!el)return;const action=el.dataset.action;const id=Number(el.dataset.id);run(async()=>{
  if(action==='close'){close();return}
  if(action==='reload'){await reload();return}
+ if(action==='connection-check'){await refreshZaloConnection();flash(connection.connected?'Zalo Bot Server đã xác thực.':'Không kết nối được Zalo Bot Server: '+connection.message,!connection.connected);return}
  if(action==='bank-add'){editBank();return}
  if(action==='bank-catalog-refresh'){bankCatalog=await req('v6/bank-catalog/refresh','POST',{});renderBanks();flash('Đã cập nhật '+bankCatalog.count+' ngân hàng từ VietQR.');return}
  if(action==='bank-preview'){previewBank(id);return}

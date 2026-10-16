@@ -15,7 +15,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import Response
 from .db import connect, tx, one, rows
 from . import bank_catalog
@@ -271,13 +271,21 @@ def update_zalo_settings(data:dict,user=Depends(admin_user)):
          (int(bool(data.get('enabled'))),int(bool(data.get('invoice_enabled'))),
           int(bool(data.get('payment_enabled'))),int(bool(data.get('ticket_enabled'))),bot_url,selection,media_url))
         audit(con,user,'update','zalo_config',1)
-    return {'ok':True}
+    # Saving settings must not pretend the Bot API was reached. Check using a new session.
+    return {'ok':True,'connection':_connection_status()}
+
+
+@router.get('/api/v6/zalo/connection')
+def zalo_connection(user=Depends(admin_user)):
+    return _connection_status()
 
 
 @router.get('/api/v6/zalo/destinations')
 def destinations(user=Depends(admin_user)):
     with connect() as con:
         return rows(con,'''SELECT d.*,t.full_name tenant_name,p.name property_name
+          ,(SELECT o.status FROM zalo_outbox o WHERE o.destination_id=d.id
+            AND o.event='destination_welcome' ORDER BY o.id DESC LIMIT 1) welcome_status
           FROM zalo_destinations d LEFT JOIN tenants t ON t.id=d.tenant_id
           LEFT JOIN properties p ON p.id=d.property_id ORDER BY d.id DESC''')
 
@@ -303,14 +311,44 @@ def _destination_values(con,data):
     return values
 
 
+def _welcome_message(values):
+    subscribed=[]
+    if values['on_invoice']:subscribed.append('Hóa đơn')
+    if values['on_payment']:subscribed.append('Thanh toán')
+    if values['on_ticket']:subscribed.append('Yêu cầu sửa chữa')
+    description=', '.join(subscribed) if subscribed else 'Chưa chọn loại thông báo tự động'
+    return (f'TRỌFLOW - XÁC NHẬN NƠI NHẬN\n'
+            f'Xin chào {values["name"]}!\n'
+            'Zalo này đã được thêm vào danh sách nơi nhận của hệ thống quản lý nhà trọ TrọFlow.\n'
+            f'Loại: {"Nhóm Zalo" if values["kind"]=="group" else "Người dùng Zalo"}\n'
+            f'Nhận thông báo: {description}.\n'
+            'Đây là tin nhắn xác nhận tự động. Nếu không đồng ý nhận tin, '
+            'vui lòng liên hệ người quản lý nhà trọ.')
+
+
 @router.post('/api/v6/zalo/destinations')
-def create_destination(data:dict,user=Depends(admin_user)):
+def create_destination(data:dict,background_tasks:BackgroundTasks,user=Depends(admin_user)):
     with tx() as con:
         values=_destination_values(con,data)
         cur=con.execute('''INSERT INTO zalo_destinations(name,thread_id,kind,property_id,tenant_id,enabled,on_invoice,on_payment,on_ticket)
           VALUES(:name,:thread_id,:kind,:property_id,:tenant_id,:enabled,:on_invoice,:on_payment,:on_ticket)''',values)
-        audit(con,user,'create','zalo_destination',cur.lastrowid)
-        return {'id':cur.lastrowid}
+        dest_id=cur.lastrowid
+        notification_id=None
+        welcome_status='skipped'
+        if values['enabled']:
+            config=_setting(con)
+            welcome_status='pending' if config['enabled'] else 'failed'
+            error='' if config['enabled'] else 'Chưa bật kênh Zalo. Bật kênh rồi chọn Gửi lại.'
+            note=con.execute('''INSERT INTO zalo_outbox(destination_id,event,event_key,message,status,error)
+                 VALUES(?,'destination_welcome',?,?,?,?)''',
+                (dest_id,f'destination_welcome:{dest_id}',_welcome_message(values),welcome_status,error))
+            notification_id=note.lastrowid
+        audit(con,user,'create','zalo_destination',dest_id)
+    # The database is already committed; a failing Zalo request never loses the new recipient.
+    # BackgroundTasks immediately attempts just this one message, not the full pending queue.
+    if welcome_status=='pending':
+        background_tasks.add_task(process_outbox,1,[notification_id])
+    return {'id':dest_id,'welcome_notification_id':notification_id,'welcome_status':welcome_status}
 
 
 @router.put('/api/v6/zalo/destinations/{ident}')
@@ -400,12 +438,49 @@ def enqueue_ticket_event(con, ticket_id):
     return len(destinations)
 
 
-def _http_json(opener,url,payload):
+def _http_json(opener,url,payload,timeout=12):
     req=urllib.request.Request(url,data=json.dumps(payload,ensure_ascii=False).encode('utf-8'),
       headers={'Content-Type':'application/json','Accept':'application/json'},method='POST')
-    with opener.open(req,timeout=12) as resp:
+    with opener.open(req,timeout=timeout) as resp:
         if resp.status!=200:raise RuntimeError('Bot trả về HTTP '+str(resp.status))
         return json.loads(resp.read(512000).decode('utf-8'))
+
+
+def _connection_status():
+    checked_at=datetime.now(timezone.utc).isoformat(timespec='seconds')
+    with connect() as con:config=_setting(con)
+    result={'status':'disconnected','connected':False,'checked_at':checked_at,
+            'message':'Chưa kiểm tra được kết nối.'}
+    if not config.get('bot_url') or not config.get('account_selection'):
+        return {**result,'status':'not_configured','message':'Chưa khai báo đầy đủ địa chỉ Bot Server và tài khoản Zalo.'}
+    try:
+        username,password=_credentials()
+    except (OSError,RuntimeError,ValueError):
+        return {**result,'status':'credentials_error','message':'Không đọc được thông tin đăng nhập bot. Kiểm tra khóa mã hóa và quyền truy cập.'}
+    if not username or not password:
+        return {**result,'status':'no_credentials','message':'Chưa nhập username/mật khẩu quản trị Zalo Bot.'}
+    try:
+        # Credentials stay strictly on the server. No client-side access and no HTTP redirects.
+        opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),
+            urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()),_NoRedirect())
+        logged=_http_json(opener,config['bot_url']+'/api/login',
+                         {'username':username,'password':password},timeout=5)
+        if not isinstance(logged,dict):
+            raise ValueError('Phản hồi bot không phải JSON object.')
+        if logged.get('success') is True:
+            return {**result,'status':'connected','connected':True,
+                    'message':'Đã kết nối và xác thực với Zalo Bot Server. Chưa kiểm chứng gửi tin nhắn đến tài khoản Zalo.'}
+        return {**result,'status':'auth_failed','message':'Đã liên lạc với Bot Server nhưng đăng nhập không thành công. Kiểm tra username/mật khẩu bot.'}
+    except HTTPError as exc:
+        return {**result,'status':'auth_failed' if exc.code in (401,403) else 'server_error',
+                'message':('Bot từ chối thông tin đăng nhập.' if exc.code in (401,403)
+                           else f'Bot Server trả về HTTP {exc.code}. Kiểm tra API /api/login.')}
+    except (URLError,OSError,TimeoutError):
+        return {**result,'status':'unreachable',
+                'message':'TroFlow không truy cập được Zalo Bot Server. Kiểm tra IP, cổng 3000, firewall và địa chỉ từ container.'}
+    except (RuntimeError,ValueError,json.JSONDecodeError):
+        return {**result,'status':'server_error',
+                'message':'Bot Server phản hồi không đúng giao thức /api/login hoặc chuyển hướng bất thường.'}
 
 
 def _bot_send(config,dest,msg,image_url=None,image_urls=None):
@@ -602,6 +677,14 @@ def outbox(user=Depends(admin_user)):
           FROM zalo_outbox o LEFT JOIN zalo_destinations d ON d.id=o.destination_id ORDER BY o.id DESC LIMIT 150''')
 
 
+@router.get('/api/v6/zalo/outbox/{ident}/status')
+def notification_status(ident:int,user=Depends(admin_user)):
+    with connect() as con:
+        entry=one(con,'SELECT id,event,status,error,sent_at FROM zalo_outbox WHERE id=?',(ident,))
+    if not entry:fail('Không tìm thấy thông báo.',404)
+    return entry
+
+
 @router.post('/api/v6/zalo/outbox/{ident}/retry')
 def retry(ident:int,user=Depends(admin_user)):
     with tx() as con:
@@ -611,12 +694,22 @@ def retry(ident:int,user=Depends(admin_user)):
     return {'ok':True}
 
 
-def process_outbox(limit=6):
-    """One worker, post-commit; no automatic re-send after a failure."""
+def process_outbox(limit=6,only_ids=None):
+    """One worker, post-commit; optionally restrict to a known notification ID.
+
+    SQL status compare-and-swap prevents duplicate delivery when the scheduler
+    and a request-scoped background task run concurrently.
+    """
     with connect() as con:
         config=_setting(con)
         if not config['enabled']:return 0
-        pending=rows(con,"SELECT id FROM zalo_outbox WHERE status='pending' ORDER BY id LIMIT ?",(limit,))
+        if only_ids is not None:
+            safe_ids=[int(item) for item in only_ids if int(item)>0][:limit]
+            if not safe_ids:return 0
+            placeholders=','.join('?' for _ in safe_ids)
+            pending=rows(con,f"SELECT id FROM zalo_outbox WHERE status='pending' AND id IN ({placeholders}) ORDER BY id",safe_ids)
+        else:
+            pending=rows(con,"SELECT id FROM zalo_outbox WHERE status='pending' ORDER BY id LIMIT ?",(limit,))
     count=0
     for entry in pending:
         ident=entry['id']

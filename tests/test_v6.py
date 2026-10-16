@@ -90,18 +90,20 @@ class V6Tests(unittest.TestCase):
   with db.tx() as con:
    notify.enqueue_invoice_event(con,inv['id'],'invoice')
   logs=self.call('GET','v6/zalo/outbox')
-  self.assertEqual(len(logs),2)
-  self.assertTrue(all(x['status']=='pending' for x in logs))
-  self.assertEqual(logs[0]['event'],'invoice')
+  invoice_logs=[item for item in logs if item['event']=='invoice']
+  welcome_logs=[item for item in logs if item['event']=='destination_welcome']
+  self.assertEqual(len(invoice_logs),2)
+  self.assertEqual(len(welcome_logs),2)
+  self.assertTrue(all(x['status']=='pending' for x in invoice_logs))
   self.call('POST','payments',{'invoice_id':inv['id'],'amount':inv['total'],'method':'cash','paid_at':'2026-10-22'})
-  self.assertEqual(len(self.call('GET','v6/zalo/outbox')),4)
+  self.assertEqual(len(self.call('GET','v6/zalo/outbox')),6)
   # The sending worker uses the uploaded bot's exact session endpoints.
   with patch('app.notify._bot_send',return_value={'success':True}) as sender:
    self.assertEqual(notify.process_outbox(),4)
    self.assertEqual(sender.call_count,4)
    endpoints=[call.args[3] for call in sender.call_args_list]
    self.assertEqual(sum(v is not None for v in endpoints),4)
-  self.assertTrue(all(x['status']=='sent' for x in self.call('GET','v6/zalo/outbox')))
+  self.assertTrue(all(x['status']=='sent' for x in self.call('GET','v6/zalo/outbox') if x['event']!='destination_welcome'))
   self.call('DELETE',f'v6/zalo/destinations/{dest_id}')
   self.assertEqual(len(self.call('GET','v6/zalo/destinations')),1)
  def test_manual_log_failed_retry_and_opaque_media(self):
