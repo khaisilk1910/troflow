@@ -27,7 +27,7 @@ class Version3Tests(unittest.TestCase):
         self.current=date.today().strftime('%Y-%m')
         self.second=addmonths(self.current,1)
         self.third=addmonths(self.current,2)
-        start=self.current+'-01'
+        start=addmonths(self.current,-1)+'-01'
         end=addmonths(self.current,6)+'-'+str(calendar.monthrange(*map(int,addmonths(self.current,6).split('-')))[1]).zfill(2)
         self.prop=self.api('POST','properties',{'name':'Khu Nam','service_fee':90000,'electric_rate':3500,'water_rate':20000}).json()['id']
         self.room=self.api('POST','rooms',{'property_id':self.prop,'code':'A1','rent':3000000}).json()['id']
@@ -61,7 +61,7 @@ class Version3Tests(unittest.TestCase):
             'end_period':self.current,'paid_on':date.today().isoformat()},400)
         self.api('PUT',f'v2/contracts/{self.contract}/proration',{'enabled':True},400)
         for i,month in enumerate([self.current,self.second,self.third]):
-            self.api('POST','readings',{'room_id':self.room,'period':month,
+            self.api('POST','readings',{'room_id':self.room,'period':addmonths(month,-1),
                 'electric_old':100+i*20,'electric_new':120+i*20,'water_old':10+i,'water_new':11+i})
             inv=self.api('POST','v2/invoices/draft',{'contract_id':self.contract,'period':month}).json()['id']
             saved=self.api('GET','invoices').json()
@@ -146,7 +146,7 @@ class Version3Tests(unittest.TestCase):
             con.execute('INSERT INTO audit_logs(action,entity) VALUES(?,?)',('before','migration'))
         db.init_db()
         with db.connect() as con:
-            self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],9)
+            self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],10)
             self.assertEqual(con.execute("SELECT COUNT(*) FROM audit_logs WHERE action='before'").fetchone()[0],1)
             self.assertEqual(con.execute('PRAGMA integrity_check').fetchone()[0],'ok')
         self.assertEqual(len(list((Path(self.temp.name)/'backups'/'migrations').glob('*.sqlite3'))),1)

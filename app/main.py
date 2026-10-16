@@ -698,7 +698,7 @@ def end_contract(ident:int,user=Depends(authorized)):
         # Do not let the legacy endpoint bypass deposit/debt settlement.
         held=one(con,'''SELECT COALESCE(SUM(CASE WHEN kind='receive' THEN amount ELSE -amount END),0) n
                       FROM deposit_transactions WHERE contract_id=?''',(ident,))['n']
-        unpaid=one(con,'''SELECT COALESCE(SUM(i.total-COALESCE(p.paid,0)),0) n
+        unpaid=one(con,'''SELECT COALESCE(SUM(MAX(0,i.total-COALESCE(p.paid,0))),0) n
                      FROM invoices i LEFT JOIN (SELECT invoice_id,SUM(amount) paid FROM payments GROUP BY invoice_id) p
                      ON p.invoice_id=i.id WHERE i.contract_id=? AND i.status='published' ''',(ident,))['n']
         future=one(con,'''SELECT COUNT(*) n FROM rent_coverage WHERE contract_id=? AND period>? AND status='active' ''',(ident,date.today().strftime('%Y-%m')))['n']
@@ -800,12 +800,11 @@ def update_reading(ident:int,data:dict,user=Depends(authorized)):
         overlap=one(con,'SELECT id FROM readings WHERE room_id=? AND period=? AND id<>?',
                     (values['room_id'],values['period'],ident))
         if overlap:fail('Phòng này đã có chỉ số tháng/năm được chọn. Vui lòng kiểm tra dữ liệu trùng.',409)
-        linked=one(con,'SELECT id FROM invoices WHERE room_id=? AND period=? LIMIT 1',
-                   (existing['room_id'],existing['period']))
+        from .billing import locked_reading
+        linked=locked_reading(con,existing['room_id'],existing['period'])
         if linked:fail('Kỳ cũ đã có hóa đơn. Cần xử lý hóa đơn trước khi đổi chỉ số.',409)
         # Protect immutable published billing periods, even when moving readings into them.
-        linked=one(con,'SELECT id FROM invoices WHERE room_id=? AND period=? LIMIT 1',
-                   (values['room_id'],values['period']))
+        linked=locked_reading(con,values['room_id'],values['period'])
         if linked:fail('Kỳ mới đã có hóa đơn. Không thể di chuyển chỉ số đến kỳ này.',409)
         before=json.dumps({k:existing[k] for k in values},ensure_ascii=False)
         update(con,'readings',ident,values)
@@ -817,8 +816,8 @@ def delete_reading(ident:int,user=Depends(authorized)):
     with tx() as con:
         current=one(con,'SELECT * FROM readings WHERE id=?',(ident,))
         if not current:fail('Không tìm thấy chỉ số.',404)
-        if one(con,'SELECT id FROM invoices WHERE room_id=? AND period=? LIMIT 1',
-               (current['room_id'],current['period'])):
+        from .billing import locked_reading
+        if locked_reading(con,current['room_id'],current['period']):
             fail('Chỉ số đã dùng lập hóa đơn. Hãy xử lý hóa đơn trước khi xóa.',409)
         con.execute('DELETE FROM readings WHERE id=?',(ident,))
         audit(con,user,'delete','reading',ident,f"room={current['room_id']} period={current['period']}")
@@ -835,8 +834,9 @@ def prev_reading(room_id:int,period:str,user=Depends(authorized)):
 INVOICE_SQL = '''SELECT i.*,rd.electric_old,rd.electric_new,rd.water_old,rd.water_new,c.tenant_id,t.full_name tenant_name,t.phone tenant_phone,
                  r.code room_code,r.property_id,p.name property_name,p.address property_address,t.id_number tenant_id_number,t.photo_path tenant_photo_path,
                  COALESCE((SELECT SUM(amount) FROM payments WHERE invoice_id=i.id),0) paid,
-                 i.total-COALESCE((SELECT SUM(amount) FROM payments WHERE invoice_id=i.id),0) balance
-                 FROM invoices i LEFT JOIN readings rd ON rd.room_id=i.room_id AND rd.period=i.period
+                 MAX(0,i.total-COALESCE((SELECT SUM(amount) FROM payments WHERE invoice_id=i.id),0)) balance,
+                 MAX(0,COALESCE((SELECT SUM(amount) FROM payments WHERE invoice_id=i.id),0)-i.total) unapplied_credit
+                 FROM invoices i LEFT JOIN readings rd ON rd.room_id=i.room_id AND rd.period=COALESCE(i.utility_period,i.period)
                  JOIN contracts c ON c.id=i.contract_id
                  JOIN tenants t ON t.id=c.tenant_id JOIN rooms r ON r.id=i.room_id
                  JOIN properties p ON p.id=r.property_id'''
@@ -885,10 +885,12 @@ def generate(data:dict,user=Depends(authorized)):
 def delete_invoice(ident:int,user=Depends(authorized)):
     try:
         with tx() as con:
-            if not one(con,'SELECT id FROM invoices WHERE id=?',(ident,)):
-                fail('Không tìm thấy hóa đơn.',404)
+            invoice=one(con,'SELECT id,status FROM invoices WHERE id=?',(ident,))
+            if not invoice:fail('Không tìm thấy hóa đơn.',404)
+            if invoice['status']=='void':fail('Hóa đơn đã hủy phải được phát hành lại, không được xóa dấu vết.',409)
             if one(con,'SELECT id FROM payments WHERE invoice_id=?',(ident,)):
                 fail('Đã ghi nhận thanh toán, không thể xóa hóa đơn.')
+            con.execute('DELETE FROM invoice_lines WHERE invoice_id=?',(ident,))
             con.execute('DELETE FROM invoices WHERE id=?',(ident,))
             audit(con,user,'delete','invoice',ident)
     except sqlite3.IntegrityError as exc:
@@ -915,7 +917,7 @@ def add_payment(data:dict,user=Depends(authorized)):
         inv=one(con,'''SELECT i.total,i.status,COALESCE(SUM(p.amount),0) paid FROM invoices i
                        LEFT JOIN payments p ON i.id=p.invoice_id WHERE i.id=? GROUP BY i.id''',(invoice_id,))
         if not inv: fail('Không tìm thấy hóa đơn.',404)
-        if inv['status']!='published': fail('Hóa đơn cần được chốt trước khi thu tiền.')
+        if inv['status']!='published': fail('Hóa đơn cần được phát hành và chưa bị hủy trước khi thu tiền.')
         if amount>inv['total']-inv['paid']: fail('Số tiền thu vượt quá số dư hóa đơn.')
         ident=insert(con,'payments',dict(invoice_id=invoice_id,amount=amount,paid_at=paid_at,method=method,note=note))
         audit(con,user,'create','payment',ident)
@@ -932,7 +934,10 @@ def edit_payment(ident:int,data:dict,user=Depends(authorized)):
     with tx() as con:
         old=one(con,'SELECT * FROM payments WHERE id=?',(ident,))
         if not old:fail('Không tìm thấy khoản thu.',404)
-        inv=one(con,'SELECT total FROM invoices WHERE id=?',(old['invoice_id'],))
+        inv=one(con,"SELECT total,status FROM invoices WHERE id=?",(old['invoice_id'],))
+        if one(con,'SELECT 1 FROM invoice_revisions WHERE invoice_id=?',(old['invoice_id'],)):
+            fail('Hóa đơn có lịch sử hủy/phát hành lại: không thể sửa chứng từ gốc. Hãy đối soát hoặc ghi giao dịch điều chỉnh riêng.',409)
+        if inv['status']=='void':fail('Hóa đơn đã hủy, cần phát hành lại trước khi sửa thanh toán.',409)
         others=one(con,'SELECT COALESCE(SUM(amount),0) n FROM payments WHERE invoice_id=? AND id<>?',
                    (old['invoice_id'],ident))['n']
         if amount+others>inv['total']:fail('Số tiền chỉnh sửa vượt giá trị hóa đơn.',409)
@@ -943,6 +948,10 @@ def edit_payment(ident:int,data:dict,user=Depends(authorized)):
 @app.delete('/api/payments/{ident}')
 def delete_payment(ident:int,user=Depends(authorized)):
     with tx() as con:
+        old=one(con,'SELECT invoice_id FROM payments WHERE id=?',(ident,))
+        if not old:fail('Không tìm thấy giao dịch.',404)
+        if one(con,'SELECT 1 FROM invoice_revisions WHERE invoice_id=?',(old['invoice_id'],)):
+            fail('Chứng từ thuộc hóa đơn đã hủy/phát hành lại: không được xóa giao dịch gốc.',409)
         cur=con.execute('DELETE FROM payments WHERE id=?',(ident,))
         if not cur.rowcount: fail('Không tìm thấy giao dịch.',404)
         audit(con,user,'delete','payment',ident)
@@ -1093,7 +1102,7 @@ def scoped_reports(period,grants):
         rent_cash=rent_advance_cash(con,period,grants)
     categories=defaultdict(int)
     for item in expenses:categories[item['category']]+=item['amount']
-    return {'period':period,'billed':sum(x['total'] for x in inv),'paid_for_period':sum(x['paid'] for x in inv),
+    return {'period':period,'billed':sum(x['total'] for x in inv),'paid_for_period':sum(min(x['paid'],x['total']) for x in inv),
          'remaining':sum(x['balance'] for x in inv),'cash_in':sum(x['amount'] for x in pay)+rent_cash,
          'cash_out':sum(x['amount'] for x in expenses),'net_cashflow':sum(x['amount'] for x in pay)+rent_cash-sum(x['amount'] for x in expenses),
          'invoice_count':len(inv),'unpaid_count':sum(x['balance']>0 for x in inv),
@@ -1175,7 +1184,7 @@ def reports(period:str,property_id:int|None=None,user=Depends(authorized)):
         for item in expenses: categories[item['category']]+=item['amount']
         due=sum(x['balance'] for x in invoices)
         return {'period':period,'billed':sum(x['total'] for x in invoices),
-                'paid_for_period':sum(x['paid'] for x in invoices),
+                'paid_for_period':sum(min(x['paid'],x['total']) for x in invoices),
                 'remaining':due,'cash_in':sum(x['amount'] for x in pay)+rent_cash,
                 'cash_out':sum(x['amount'] for x in expenses),
                 'net_cashflow':sum(x['amount'] for x in pay)+rent_cash-sum(x['amount'] for x in expenses),
@@ -1307,3 +1316,6 @@ app.include_router(repairs_router)
 
 from .home_assistant import router as ha_router
 app.include_router(ha_router)
+
+from .billing_admin import router as billing_admin_router
+app.include_router(billing_admin_router)

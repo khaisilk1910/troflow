@@ -163,7 +163,7 @@ def tenant_home(t=Depends(session_tenant)):
         if ids:
             placeholders=','.join('?' for _ in ids)
             invoices=rows(con,f'''SELECT i.id,i.contract_id,i.period,i.total,i.rent,i.electricity,i.water,i.services,
-               i.adjustment,i.electric_usage,i.water_usage,i.status,i.created_at,
+               i.adjustment,i.electric_usage,i.water_usage,i.status,i.created_at,i.utility_period,
                COALESCE((SELECT SUM(amount) FROM payments WHERE invoice_id=i.id),0) paid
                FROM invoices i WHERE i.contract_id IN ({placeholders}) AND i.status='published' ORDER BY i.period DESC,i.id DESC LIMIT 100''',ids)
             readings=rows(con,f'''SELECT d.period,d.electric_old,d.electric_new,d.water_old,d.water_new,
@@ -260,7 +260,8 @@ async def tenant_submit(request:Request,contract_id:int=Form(...),period:str=For
             c=check_period_contract(con,t,contract_id,period)
             if one(con,'SELECT id FROM readings WHERE room_id=? AND period=?',(c['room_id'],period)):
                 fail('Kỳ này đã có chỉ số chính thức.',409)
-            if one(con,'SELECT id FROM invoices WHERE room_id=? AND period=?',(c['room_id'],period)):
+            from .billing import locked_reading
+            if locked_reading(con,c['room_id'],period):
                 fail('Kỳ này đã được lập hóa đơn.',409)
             prev=previous_reading(con,c['room_id'],period)
             if not prev:fail('Chưa có chỉ số kỳ trước. Vui lòng yêu cầu quản lý thiết lập số đầu kỳ.',409)
@@ -323,7 +324,8 @@ def admin_review(ident:int,data:dict,user=Depends(authorized)):
                 fail('Hợp đồng không còn hợp lệ.',409)
             if one(con,'SELECT id FROM readings WHERE room_id=? AND period=?',(s['room_id'],s['period'])):
                 fail('Chỉ số chính thức kỳ này đã tồn tại.',409)
-            if one(con,'SELECT id FROM invoices WHERE room_id=? AND period=?',(s['room_id'],s['period'])):
+            from .billing import locked_reading
+            if locked_reading(con,s['room_id'],s['period']):
                 fail('Hóa đơn kỳ này đã lập, không thể tự duyệt.',409)
             prev=previous_reading(con,s['room_id'],s['period'])
             if not prev or s['electric_new']<prev['electric_new'] or s['water_new']<prev['water_new']:

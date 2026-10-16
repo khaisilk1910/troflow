@@ -43,12 +43,12 @@ class V4IntegrationTests(unittest.TestCase):
   self.req('PUT',f'readings/{id1}',{**self.reader,'period':'2026-08','electric_new':29})
   rows=self.req('GET','readings').json();self.assertEqual({r['period'] for r in rows},{'2026-07','2026-08'})
   self.req('DELETE',f'readings/{id2}');self.assertEqual(len(self.req('GET','readings').json()),1)
-  self.req('POST','invoices/generate',{'period':'2026-08'})
+  self.req('POST','invoices/generate',{'period':'2026-09'})
   self.req('DELETE',f'readings/{id1}',expected=409)
   self.req('PUT',f'readings/{id1}',{**self.reader,'period':'2026-09'},409)
  def test_tenant_meter_photos_and_version(self):
   with db.connect() as con:
-   self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],9)
+   self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],10)
    self.assertIn('photo_path',{r[1] for r in con.execute('PRAGMA table_info(tenants)')})
   id1=self.req('POST','readings',self.reader).json()['id']
   for category,ref in [('tenant',self.tenant),('electric',id1),('water',id1)]:
@@ -62,7 +62,7 @@ class V4IntegrationTests(unittest.TestCase):
   readings=self.req('GET','readings').json();self.assertTrue(readings[0]['electric_photo']);self.assertTrue(readings[0]['water_photo'])
  def test_admin_payment_correction_and_overpayment_guard(self):
   self.req('POST','readings',self.reader)
-  self.req('POST','invoices/generate',{'period':'2026-06'})
+  self.req('POST','invoices/generate',{'period':'2026-07'})
   invoice=self.req('GET','invoices').json()[0]
   payment=self.req('POST','payments',{'invoice_id':invoice['id'],'amount':500000,'paid_at':'2026-06-20','method':'cash'}).json()['id']
   self.req('PUT',f'payments/{payment}',{'amount':400000,'paid_at':'2026-06-21','method':'transfer','note':'Điều chỉnh giao dịch'})
@@ -98,7 +98,7 @@ class V4IntegrationTests(unittest.TestCase):
   self.assertFalse(self.req('GET','contracts').json())
   cid=self.req('POST','contracts',{'room_id':self.room,'tenant_id':self.tenant,'start_date':'2026-01-01','end_date':'2027-12-31','monthly_rent':2000000}).json()['id']
   self.req('POST','readings',self.reader)
-  self.req('POST','invoices/generate',{'period':'2026-06'})
+  self.req('POST','invoices/generate',{'period':'2026-07'})
   self.req('DELETE',f'contracts/{cid}',expected=409)
 
 if __name__=='__main__': unittest.main()

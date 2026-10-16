@@ -48,11 +48,13 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(len(self.get('properties')),1)
         today=self.today.isoformat()
         next_year=self.today.replace(year=self.today.year+1).isoformat()
-        contract_data={'room_id':r,'tenant_id':t,'start_date':today,'end_date':next_year,'monthly_rent':3000000,'deposit':3000000,'due_day':5,'occupants':2}
+        from app.billing import previous_period
+        prior=previous_period(self.period)
+        contract_data={'room_id':r,'tenant_id':t,'start_date':prior+'-01','end_date':next_year,'monthly_rent':3000000,'deposit':3000000,'due_day':5,'occupants':2}
         c=self.post('contracts',contract_data)['id']
         self.post('contracts',contract_data,400)
         self.assertEqual(self.get('rooms')[0]['status'],'occupied')
-        self.post('readings',{'room_id':r,'period':self.period,'electric_old':100,'electric_new':125,'water_old':8,'water_new':12})
+        self.post('readings',{'room_id':r,'period':prior,'electric_old':100,'electric_new':125,'water_old':8,'water_new':12})
         created=self.post('invoices/generate',{'period':self.period})
         self.assertEqual(created['created'],1)
         i=self.get('invoices')[0]
@@ -61,7 +63,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(i['total'],3267500)
         self.assertEqual(i['balance'],3267500)
         self.assertEqual(self.post('invoices/generate',{'period':self.period})['created'],0)
-        self.post('readings',{'room_id':r,'period':self.period,'electric_old':100,'electric_new':130,'water_old':8,'water_new':12},409)
+        self.post('readings',{'room_id':r,'period':prior,'electric_old':100,'electric_new':130,'water_old':8,'water_new':12},409)
         self.post('payments',{'invoice_id':i['id'],'amount':1000000,'paid_at':today,'method':'transfer'})
         self.assertEqual(self.get('invoices')[0]['balance'],2267500)
         self.post('payments',{'invoice_id':i['id'],'amount':2267501,'paid_at':today,'method':'cash'},400)

@@ -375,3 +375,28 @@ def migrate_v9(con, db_path, existed_before_init=True):
     except Exception:
         con.rollback()
         raise
+
+
+def migrate_v10(con, db_path, existed_before_init=True):
+    """Keep historic invoices untouched and identify actual utility consumption period.
+
+    Legacy records used the invoice month for electric/water readings. We deliberately
+    leave utility_period NULL for them rather than silently shifting archived invoices.
+    """
+    if con.execute('PRAGMA user_version').fetchone()[0] >= 10:return
+    if existed_before_init:_backup_before_upgrade(con,db_path,tag='v10')
+    con.execute('BEGIN IMMEDIATE')
+    try:
+        present={r[1] for r in con.execute('PRAGMA table_info(invoices)')}
+        for name,definition in {
+          'utility_period':'TEXT',
+          'voided_at':'TEXT',
+          'void_reason':"TEXT NOT NULL DEFAULT ''",
+        }.items():
+            if name not in present:con.execute(f'ALTER TABLE invoices ADD COLUMN {name} {definition}')
+        con.execute('CREATE INDEX IF NOT EXISTS idx_invoice_utility_period ON invoices(utility_period,status)')
+        con.execute('PRAGMA user_version=10')
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise

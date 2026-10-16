@@ -22,7 +22,7 @@ class V6Tests(unittest.TestCase):
   self.room=self.call('POST','rooms',{'property_id':self.prop,'code':'P01','rent':3000000})['id']
   self.tenant=self.call('POST','tenants',{'full_name':'Trang','phone':'0982986102','id_number':'001234567890'})['id']
   self.call('POST','contracts',{'room_id':self.room,'tenant_id':self.tenant,'start_date':'2026-01-01','end_date':'2027-12-31','monthly_rent':3000000})
-  self.call('POST','readings',{'room_id':self.room,'period':'2026-10','electric_old':100,'electric_new':200,'water_old':10,'water_new':15})
+  self.call('POST','readings',{'room_id':self.room,'period':'2026-09','electric_old':100,'electric_new':200,'water_old':10,'water_new':15})
  def tearDown(self):
   self.client.close();db.DB_PATH=self.prev
   if self.old_env is None:os.environ.pop('BACKUP_DIRECTORY',None)
@@ -47,7 +47,7 @@ class V6Tests(unittest.TestCase):
    con.execute('PRAGMA user_version=5')
   db.init_db()
   with db.connect() as con:
-   self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],9)
+   self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],10)
    self.assertEqual(con.execute('PRAGMA integrity_check').fetchone()[0],'ok')
    self.assertEqual(con.execute('SELECT COUNT(*) FROM rooms').fetchone()[0],1)
    self.assertEqual(con.execute('SELECT account_number FROM bank_accounts').fetchone()[0],'123456789')

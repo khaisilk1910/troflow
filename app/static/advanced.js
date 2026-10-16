@@ -104,10 +104,10 @@ function pageMeters(){const warnings=state.data.meterAlerts||[],rd=state.data.re
  table(['PHÒNG / NGƯỜI THUÊ','KỲ','ĐIỆN CŨ / MỚI','NƯỚC CŨ / MỚI','ẢNH CÔNG TƠ',''],rd.filter(x=>x.period.startsWith(String(year)+'-')).map(x=>`<tr><td><strong>${esc(x.room_code)}</strong><br><small class="muted">${esc(x.property_name)} · ${tenantIdentity(x)}</small></td><td>${esc(x.period)}</td><td>${readNum(x.electric_old)} → ${readNum(x.electric_new)}</td><td>${readNum(x.water_old)} → ${readNum(x.water_new)}</td><td>${x.electric_photo?`<a href="/api/v2/files/${encodeURIComponent(x.electric_photo)}" target="_blank">Ảnh điện</a>`:'—'} ${x.water_photo?`<a href="/api/v2/files/${encodeURIComponent(x.water_photo)}" target="_blank">Ảnh nước</a>`:''}</td><td><div class="actions">${btn('Ảnh điện','meter-photo-e',x.id)}${btn('Ảnh nước','meter-photo-w',x.id)}</div></td></tr>`));
 }
 function pageInvoices(){const list=state.data.invoices||[],drafts=list.filter(x=>x.status==='draft');
- return header('Hóa đơn chuyên nghiệp','Xem trước, lập nháp, chỉnh sửa, duyệt/chốt, PDF và mã thanh toán VietQR.',btn('+ Lập nháp','invoice-new','','primary')+btn('Tính theo ngày','proration')+btn('Cập nhật','reload'))+
+ return header('Hóa đơn chuyên nghiệp','Thu tiền phòng kỳ này; điện/nước kỳ tiêu thụ liền trước. Admin có thể hủy và phát hành lại hóa đơn, kể cả đã thu tiền.',btn('+ Lập nháp','invoice-new','','primary')+btn('Tính theo ngày','proration')+btn('Cập nhật','reload'))+
  `<div class="note">Hóa đơn nháp không thể ghi nhận thanh toán. Nợ kỳ trước chỉ hiển thị để đối soát, không được tính lần hai vào tổng hóa đơn.</div>`+
  `<div class="kpis"><div class="kpi"><div class="hint">Chờ duyệt</div><strong>${drafts.length}</strong></div><div class="kpi"><div class="hint">Tổng hóa đơn</div><strong>${list.length}</strong></div><div class="kpi"><div class="hint">Tiền cần duyệt</div><strong style="font-size:19px">${money(drafts.reduce((a,x)=>a+x.total,0))}</strong></div></div>`+
- table(['MÃ','PHÒNG','KỲ','TIỀN THUÊ','DỊCH VỤ','TỔNG','TRẠNG THÁI','THAO TÁC'],list.slice(0,150).map(x=>`<tr><td><strong>HD-${x.id}</strong></td><td>${esc(x.property_name)} / ${esc(x.room_code)}</td><td>${esc(x.period)}</td><td>${money(x.rent)}</td><td>${money(x.services)}</td><td class="money">${money(x.total)}</td><td>${badge(x.status==='draft'?'CHỜ DUYỆT':'ĐÃ CHỐT',x.status==='draft'?'orange':'')}</td><td><div class="actions">${x.status==='draft'?btn('Sửa','invoice-edit',x.id)+btn('Chốt','invoice-publish',x.id,'primary'):btn('QR','invoice-qr',x.id)}<a class="button" href="/api/v2/invoices/${x.id}/pdf" target="_blank">PDF</a></div></td></tr>`));
+ table(['MÃ','PHÒNG','KỲ','TIỀN THUÊ','DỊCH VỤ','TỔNG','TRẠNG THÁI','THAO TÁC'],list.slice(0,150).map(x=>`<tr><td><strong>HD-${x.id}</strong></td><td>${esc(x.property_name)} / ${esc(x.room_code)}</td><td>${esc(x.period)}</td><td>${money(x.rent)}</td><td>${money(x.services)}</td><td class="money">${money(x.total)}</td><td>${badge(x.status==='void'?'ĐÃ HỦY':x.status==='draft'?'CHỜ DUYỆT':'ĐÃ CHỐT',x.status==='draft'||x.status==='void'?'orange':'')}</td><td><div class="actions">${x.status==='draft'?btn('Sửa','invoice-edit',x.id)+btn('Chốt','invoice-publish',x.id,'primary'):x.status==='void'?badge('Đã hủy','orange'):btn('QR','invoice-qr',x.id)}${state.auth?.user?.role==='admin'?btn('Phát hành lại','invoice-reissue',x.id)+ (x.status==='void'?'':btn('Hủy','invoice-void',x.id)):''}${x.status==='void'?'':`<a class="button" href="/api/v2/invoices/${x.id}/pdf" target="_blank">PDF</a>`}</div></td></tr>`));
 }
 function pageHandovers(){const h=state.data.handovers||[];
  return header('Bàn giao · Trả phòng','Lưu hiện trạng, chỉ số chốt, quyết toán tiền cọc và kết thúc hợp đồng có kiểm soát.',btn('+ Biên bản mới','handover-new','','primary'))+
@@ -191,7 +191,7 @@ function command(cmd,id){const sid=Number(id),d=state.data;
  form('Lập hóa đơn nháp',[formspec('contract_id','Hợp đồng','select',cOpts()),formspec('period','Kỳ hóa đơn','month',{},period()),
  formspec('discount','Giảm giá (VND)','money',{},0),formspec('surcharge','Truy thu (VND)','money',{},0),
  formspec('adjustment','Điều chỉnh ± (VND)','number',{},0),formspec('note','Nội dung hóa đơn','textarea',{},'')],d=>api('v2/invoices/draft','POST',d),'Tạo hóa đơn nháp',
- 'Phải có chỉ số điện nước kỳ này. Hóa đơn được tạo ở trạng thái nháp, sau đó chốt riêng.');
+ 'Điện/nước lấy tháng trước kỳ hóa đơn. Hóa đơn được tạo ở trạng thái nháp và chỉ chốt sau khi kiểm tra.');
  const footer=$('#pro-form .dialog-foot');if(footer)footer.insertAdjacentHTML('afterbegin',btn('Xem trước tiền','invoice-preview'));
  return;}
  if(cmd==='proration'){
@@ -207,6 +207,21 @@ function command(cmd,id){const sid=Number(id),d=state.data;
     else $('#pro-form .dialog-body').insertAdjacentHTML('beforeend','<div id="invoice-preview-result" style="margin-top:16px">'+text+'</div>');
   }).catch(e=>toast(e.message,true));return;
  }
+ if(cmd==='invoice-reissue'){
+  const i=d.invoices.find(x=>x.id===sid);form('Phát hành lại hóa đơn HD-'+sid,[
+  formspec('adjustment','Điều chỉnh ± (VND)','number',{},i.adjustment||0),
+  formspec('discount','Giảm giá (VND)','money',{},i.discount||0),
+  formspec('surcharge','Phụ thu (VND)','money',{},i.surcharge||0),
+  formspec('note','Ghi chú','textarea',{},i.note||''),
+  formspec('reason','Lý do phát hành lại (bắt buộc)','textarea'),
+  formspec('acknowledge_credit','Tôi xác nhận khoản thu thừa chờ đối soát, không tự hoàn tiền','checkbox',{},false)],x=>api('v10/invoices/'+sid+'/reissue','POST',x),'Phát hành lại',
+  'Sẽ tính lại điện nước tháng trước và giữ mọi giao dịch. Nếu tổng mới thấp hơn số đã thu, phải tích xác nhận khoản tiền thừa cần đối soát.');return;}
+ if(cmd==='invoice-void'){
+  const i=d.invoices.find(x=>x.id===sid);form('Hủy hiệu lực hóa đơn HD-'+sid,[
+  formspec('reason','Lý do hủy (bắt buộc)','textarea'),
+  formspec('acknowledge_payments','Xác nhận giữ toàn bộ giao dịch thu để đối soát','checkbox',{},false)],
+  x=>api('v10/invoices/'+sid+'/void','POST',x),'Hủy hiệu lực',
+  'Không xóa dữ liệu hoặc khoản thanh toán cũ. Có thể sửa chỉ số và phát hành lại cùng ID hóa đơn.');return;}
  if(cmd==='invoice-edit'){
  const i=d.invoices.find(x=>x.id===sid);
  form('Sửa hóa đơn nháp HD-'+sid,[formspec('discount','Giảm giá (VND)','money',{},i.discount),

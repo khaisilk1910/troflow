@@ -159,7 +159,7 @@ def utility_report(year:int,property_id:int|None=None,user=Depends(authorized)):
             FROM utility_meter_periods b JOIN utility_meters m ON m.id=b.meter_id
             WHERE m.property_id IN ({ph}) AND b.period LIKE ? GROUP BY m.property_id,b.period,m.kind''',(*allowed_props,str(year)+'-%'))
         # Customer billing and collected share, with payments grouped before aggregation.
-        customer=rows(con,f'''SELECT r.property_id,i.period,
+        customer=rows(con,f'''SELECT r.property_id,COALESCE(i.utility_period,i.period) period,
             SUM(CASE WHEN i.status='published' THEN i.electricity ELSE 0 END) electric_charge,
             SUM(CASE WHEN i.status='published' THEN i.water ELSE 0 END) water_charge,
             SUM(CASE WHEN i.status='published' AND i.total>0 THEN
@@ -168,7 +168,7 @@ def utility_report(year:int,property_id:int|None=None,user=Depends(authorized)):
               i.water * (CAST(MIN(i.total, COALESCE(p.paid,0)) AS REAL)/i.total) ELSE 0 END) water_collected
           FROM invoices i JOIN rooms r ON r.id=i.room_id
           LEFT JOIN (SELECT invoice_id,SUM(amount) paid FROM payments GROUP BY invoice_id) p ON p.invoice_id=i.id
-          WHERE r.property_id IN ({ph}) AND i.period LIKE ? GROUP BY r.property_id,i.period''',(*allowed_props,str(year)+'-%'))
+          WHERE r.property_id IN ({ph}) AND i.status='published' AND COALESCE(i.utility_period,i.period) LIKE ? GROUP BY r.property_id,COALESCE(i.utility_period,i.period)''',(*allowed_props,str(year)+'-%'))
         meters=rows(con,f'''SELECT property_id,kind,COUNT(*) n FROM utility_meters
           WHERE property_id IN ({ph}) AND active=1 GROUP BY property_id,kind''',tuple(allowed_props))
     aggregate={}

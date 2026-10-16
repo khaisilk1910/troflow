@@ -23,7 +23,7 @@ class InvoiceV54Tests(unittest.TestCase):
   self.r=self.req('POST','rooms',{'property_id':self.p,'code':'P01','rent':3000000})['id']
   self.t=self.req('POST','tenants',{'full_name':'Trần Ngọc Trang','phone':'0982986102','id_number':'001234567890'})['id']
   self.c=self.req('POST','contracts',{'room_id':self.r,'tenant_id':self.t,'start_date':'2026-01-01','end_date':'2027-12-31','monthly_rent':3000000})['id']
-  self.req('POST','readings',{'room_id':self.r,'period':'2026-10','electric_old':19551,'electric_new':19828,'water_old':834,'water_new':842})
+  self.req('POST','readings',{'room_id':self.r,'period':'2026-09','electric_old':19551,'electric_new':19828,'water_old':834,'water_new':842})
   service=self.req('POST','v2/services',{'property_id':self.p,'name':'Wi-Fi 100Mbps','charge_type':'flat','unit_price':100000})['id']
   self.req('POST','v2/contract-services',{'contract_id':self.c,'service_id':service,'quantity':1})
   self.bank=self.req('POST','v6/banks',{'property_id':self.p,'bank_code':'970418','bank_name':'BIDV','holder':'NGUYEN THI NHUNG','account_number':'1250774410','is_default':1,'active':1})['id']

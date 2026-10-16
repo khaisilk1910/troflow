@@ -39,7 +39,7 @@ class V5Tests(unittest.TestCase):
    con.execute('PRAGMA user_version=4')
   db.init_db()
   with db.connect() as con:
-   self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],9)
+   self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],10)
    self.assertEqual(con.execute("SELECT id_number FROM tenants WHERE full_name='Hồ sơ cũ'").fetchone()[0],'')
    self.assertIn('id_back_path',{x[1] for x in con.execute('PRAGMA table_info(tenants)')})
    self.assertEqual(con.execute('PRAGMA integrity_check').fetchone()[0],'ok')
@@ -78,13 +78,13 @@ class V5Tests(unittest.TestCase):
   rid=self.call('POST','rooms',{'property_id':self.prop,'code':'P01','rent':1000000})['id']
   tid=self.call('POST','tenants',{'full_name':'Người A','phone':'0900000001','id_number':'001234567890'})['id']
   self.call('POST','contracts',{'room_id':rid,'tenant_id':tid,'start_date':'2026-01-01','end_date':'2027-12-01','monthly_rent':1000000})
-  self.call('POST','readings',{'room_id':rid,'period':'2026-06','electric_old':100,'electric_new':200,'water_old':10,'water_new':12})
+  self.call('POST','readings',{'room_id':rid,'period':'2026-05','electric_old':100,'electric_new':200,'water_old':10,'water_new':12})
   self.call('POST','invoices/generate',{'period':'2026-06'})
   inv=self.call('GET','invoices')[0];self.assertEqual(inv['electricity'],350000);self.assertEqual(inv['water'],40000)
   self.call('POST','payments',{'invoice_id':inv['id'],'amount':695000,'paid_at':'2026-06-29','method':'transfer'})
   e=self.new_meter();w=self.new_meter('water','W01')
-  self.call('POST','utility-bills',self.new_bill(e,bill_amount=200000,paid_amount=150000,paid_on='2026-07-01'))
-  self.call('POST','utility-bills',self.new_bill(w,bill_amount=30000,paid_amount=30000,paid_on='2026-07-01'))
+  self.call('POST','utility-bills',self.new_bill(e,period='2026-05',bill_amount=200000,paid_amount=150000,paid_on='2026-07-01'))
+  self.call('POST','utility-bills',self.new_bill(w,period='2026-05',bill_amount=30000,paid_amount=30000,paid_on='2026-07-01'))
   report=self.call('GET','utility-report?year=2026')
   self.assertEqual(len(report['items']),1)
   row=report['items'][0]

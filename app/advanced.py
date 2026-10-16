@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse, Response
 
 from .db import connect, tx, one, rows
 from . import db as dbmodule
-from .billing import calculate, create, month_range
+from .billing import calculate, create, month_range, previous_period, locked_reading
 from .main import authorized, admin_user, fail, positive, trim, date_str, period_str, enum, audit, json_ok, CONTRACT_SQL, occupied_contract
 
 router = APIRouter(prefix='/api/v2', tags=['TroFlow 2'])
@@ -75,7 +75,7 @@ def summary(user=Depends(authorized)):
         if not ids: return {'properties':[],'drafts':0,'missing_readings':[],'unsettled_deposits':0,'today':date.today().isoformat()}
         q=','.join('?' for _ in ids)
         drafts=one(con,f"SELECT COUNT(*) n FROM invoices i JOIN rooms r ON r.id=i.room_id WHERE i.status='draft' AND r.property_id IN ({q})",ids)['n']
-        period=date.today().strftime('%Y-%m')
+        period=previous_period(date.today().strftime('%Y-%m'))
         missing=rows(con,f'''SELECT r.id room_id,r.code,p.name property_name FROM rooms r
          JOIN properties p ON p.id=r.property_id JOIN contracts c ON c.room_id=r.id AND c.status='active'
          LEFT JOIN readings d ON d.room_id=r.id AND d.period=?
@@ -269,7 +269,7 @@ def readings_batch(data:dict,user=Depends(authorized)):
                 fail(f'Phòng #{rid} chưa có người thuê / hợp đồng trong kỳ {period}.')
             vals=[float(entry.get(k,0)) for k in ('electric_old','electric_new','water_old','water_new')]
             if any(x<0 or x>10_000_000 for x in vals) or vals[1]<vals[0] or vals[3]<vals[2]:fail('Chỉ số mới phải >= chỉ số cũ và không âm.')
-            if one(con,'SELECT id FROM invoices WHERE room_id=? AND period=?',(rid,period)):
+            if locked_reading(con,rid,period):
                 fail(f'Phòng #{rid} đã có hóa đơn, không thể sửa chỉ số.')
             prev=one(con,'''SELECT electric_new,water_new FROM readings
                             WHERE room_id=? AND period<? ORDER BY period DESC LIMIT 1''',(rid,period))
@@ -457,7 +457,7 @@ def handover(data:dict,user=Depends(authorized)):
             future=one(con,'''SELECT COALESCE(SUM(amount),0) n FROM rent_coverage
                 WHERE contract_id=? AND period>? AND status='active' ''',(cid,handover_on[:7]))['n']
             if future:fail(f'Còn {future:,} VND tiền thuê trả trước của các tháng sau ngày trả phòng. Hãy hoàn các tháng chưa dùng trước khi kết thúc hợp đồng.')
-            unpaid=one(con,'''SELECT COALESCE(SUM(i.total-COALESCE(p.amount,0)),0) amount
+            unpaid=one(con,'''SELECT COALESCE(SUM(MAX(0,i.total-COALESCE(p.amount,0))),0) amount
                  FROM invoices i LEFT JOIN (SELECT invoice_id,SUM(amount) amount FROM payments GROUP BY invoice_id) p
                  ON p.invoice_id=i.id WHERE i.contract_id=? AND i.status='published' ''',(cid,))['amount']
             if unpaid>0 and not data.get('ack_debt'):
@@ -473,7 +473,7 @@ def handover(data:dict,user=Depends(authorized)):
                 en=float(data.get('electric_final') if data.get('electric_final') not in (None,'') else existing['electric_new'] if existing else eo)
                 wn=float(data.get('water_final') if data.get('water_final') not in (None,'') else existing['water_new'] if existing else wo)
                 if en<eo or wn<wo or en>1e7 or wn>1e7:fail('Chỉ số bàn giao không hợp lệ.')
-                locked=one(con,'SELECT id FROM invoices WHERE room_id=? AND period=?',(contract['room_id'],period))
+                locked=locked_reading(con,contract['room_id'],period)
                 if locked and (not existing or en!=existing['electric_new'] or wn!=existing['water_new']):
                     fail('Chỉ số tháng này đã lên hóa đơn. Cần quyết toán điện nước trước khi thay đổi chỉ số cuối.')
                 if not locked:
@@ -886,6 +886,7 @@ def invoice_pdf(ident:int,user=Depends(authorized)):
         right(user,invoice_property(con,ident),'view')
         invoice=_invoice(con,ident)
         if not invoice:fail('Không tìm thấy hóa đơn.',404)
+        if invoice['status']=='void':fail('Hóa đơn đã hủy không được xuất bản in. Hãy phát hành lại trước.',409)
         details=invoice_lines(con,ident)
         qr=_qr_details(con,ident)
     png=_invoice_png(invoice,qr,details)

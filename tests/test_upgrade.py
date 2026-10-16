@@ -32,6 +32,7 @@ class UpgradeTests(unittest.TestCase):
         self.month=date.today().strftime('%Y-%m')
         self.today=date.today().isoformat()
         self.first=date.today().replace(day=1).isoformat()
+        self.prevmonth=(date.today().replace(day=1)-timedelta(days=1)).strftime('%Y-%m')
         self.last=(date.today()+timedelta(days=360)).isoformat()
     def tearDown(self):
         self.client.close();self.tmp.cleanup()
@@ -46,7 +47,7 @@ class UpgradeTests(unittest.TestCase):
         pid=self.req('POST','properties',{'name':'Cơ sở '+number,'electric_rate':3500,'water_rate':20000,'service_fee':service_fee}) .json()['id']
         roomid=self.req('POST','rooms',{'property_id':pid,'code':number,'rent':rent,'deposit':rent}).json()['id']
         tid=self.req('POST','tenants',{'full_name':'Nguyễn Minh Anh','phone':'0900000000','id_number':'001234567890'}).json()['id']
-        cid=self.req('POST','contracts',{'room_id':roomid,'tenant_id':tid,'start_date':self.first,'end_date':self.last,
+        cid=self.req('POST','contracts',{'room_id':roomid,'tenant_id':tid,'start_date':self.prevmonth+'-01','end_date':self.last,
                     'monthly_rent':rent,'deposit':rent,'occupants':2}).json()['id']
         return pid,roomid,tid,cid
 
@@ -61,10 +62,10 @@ class UpgradeTests(unittest.TestCase):
         sid=self.req('POST','v2/services',{'property_id':pid,'name':'Gửi xe','charge_type':'quantity','unit_price':80000}).json()['id']
         self.req('POST','v2/contract-services',{'contract_id':cid,'service_id':sid,'quantity':2})
         self.req('PUT',f'v2/contracts/{cid}/proration',{'enabled':True})
-        recorded=self.req('POST','v2/readings/batch',{'period':self.month,'entries':[{'room_id':rid,
+        recorded=self.req('POST','v2/readings/batch',{'period':self.prevmonth,'entries':[{'room_id':rid,
                      'electric_old':100,'electric_new':120,'water_old':4,'water_new':6}]}).json()
         self.assertEqual(recorded['updated'],1)
-        self.assertEqual(self.req('GET','v2/readings/alerts?period='+self.month).json(),[])
+        self.assertEqual(self.req('GET','v2/readings/alerts?period='+self.prevmonth).json(),[])
         preview=self.req('POST','v2/invoices/preview',{'contract_id':cid,'period':self.month,'discount':50000}).json()
         self.assertEqual(preview['electricity'],70000)
         self.assertEqual(preview['water'],40000)
@@ -117,7 +118,7 @@ class UpgradeTests(unittest.TestCase):
     def test_access_scope_and_scheduler(self):
         p1,r1,t1,c1=self.setup_contract('101')
         p2,r2,t2,c2=self.setup_contract('102')
-        self.req('POST','readings',{'room_id':r1,'period':self.month,'electric_old':0,'electric_new':5,'water_old':0,'water_new':1})
+        self.req('POST','readings',{'room_id':r1,'period':self.prevmonth,'electric_old':0,'electric_new':5,'water_old':0,'water_new':1})
         self.req('PUT',f'v2/schedules/{p1}',{'active':True,'day_of_month':1})
         results=self.req('POST',f'v2/schedules/run/{p1}',{'period':self.month}).json()
         self.assertEqual(results['created'],1)
@@ -166,7 +167,7 @@ class UpgradeTests(unittest.TestCase):
         db.DB_PATH=legacy
         db.init_db();db.init_db()
         with db.connect() as con:
-            self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],9)
+            self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],10)
             self.assertEqual(con.execute('SELECT COUNT(*) FROM contract_residents').fetchone()[0],1)
             self.assertEqual(con.execute('SELECT name FROM properties WHERE id=1').fetchone()[0],'Cơ sở cũ')
             self.assertEqual(con.execute('SELECT prorate FROM contracts WHERE id=1').fetchone()[0],0)

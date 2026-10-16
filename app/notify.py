@@ -120,11 +120,12 @@ def _bank_payload(con,property_id):
 
 def _qr_details(con,invoice_id):
     invoice=one(con,'''SELECT i.id,i.period,i.total,r.property_id,p.name property_name,
-           t.full_name tenant_name,t.phone tenant_phone,r.code room_code
+           t.full_name tenant_name,t.phone tenant_phone,r.code room_code,i.status
            FROM invoices i JOIN rooms r ON r.id=i.room_id
            JOIN properties p ON p.id=r.property_id JOIN contracts c ON c.id=i.contract_id
            JOIN tenants t ON t.id=c.tenant_id WHERE i.id=?''',(invoice_id,))
     if not invoice:fail('Không tìm thấy hóa đơn.',404)
+    if invoice['status']!='published':return {'configured':False,'invoice_id':invoice_id}
     bank=_bank_payload(con,invoice['property_id'])
     if not bank:return {'configured':False,'invoice_id':invoice_id}
     paid=one(con,'SELECT COALESCE(SUM(amount),0) value FROM payments WHERE invoice_id=?',(invoice_id,))['value']
@@ -390,25 +391,25 @@ def _invoice(con,invoice_id):
        COALESCE((SELECT SUM(amount) FROM payments pay WHERE pay.invoice_id=i.id),0) paid
        FROM invoices i JOIN rooms r ON r.id=i.room_id JOIN properties p ON p.id=r.property_id
        JOIN contracts c ON c.id=i.contract_id JOIN tenants t ON t.id=c.tenant_id
-       LEFT JOIN readings d ON d.room_id=i.room_id AND d.period=i.period
+       LEFT JOIN readings d ON d.room_id=i.room_id AND d.period=COALESCE(i.utility_period,i.period)
        WHERE i.id=?''',(invoice_id,))
 
 
-def enqueue_invoice_event(con,invoice_id,event):
+def enqueue_invoice_event(con,invoice_id,event,revision_key=''):
     """Call INSIDE business transaction; outbox sends only after commit."""
     if event not in ('invoice','payment'):return
     setting=_setting(con)
     if not setting.get('enabled') or not setting.get(event+'_enabled'):return
     inv=_invoice(con,invoice_id)
-    if not inv:return
+    if not inv or inv['status']!='published':return
     for dest in rows(con,'''SELECT * FROM zalo_destinations WHERE enabled=1 AND
       (property_id IS NULL OR property_id=?) AND (tenant_id IS NULL OR tenant_id=?) AND '''+
       ('on_invoice=1' if event=='invoice' else 'on_payment=1'),(inv['property_id'],inv['tenant_id'])):
         paid=inv['paid']
         status='ĐÃ THANH TOÁN' if paid>=inv['total'] else 'ĐÃ NHẬN THANH TOÁN' if event=='payment' else 'HÓA ĐƠN CẦN THANH TOÁN'
-        msg=f'{status}\n{inv["property_name"]} · Phòng {inv["room_code"]}\nKhách: {inv["tenant_name"]}\nKỳ: {inv["period"]}\nTổng: {inv["total"]:,.0f} đ\nĐã thu: {paid:,.0f} đ\nCòn lại: {max(0,inv["total"]-paid):,.0f} đ'
+        msg=f'{status}\n{inv["property_name"]} · Phòng {inv["room_code"]}\nKhách: {inv["tenant_name"]}\nTiền phòng: {inv["period"]}\nĐiện/nước: {inv.get("utility_period") or inv["period"]}\nTổng: {inv["total"]:,.0f} đ\nĐã thu: {paid:,.0f} đ\nCòn lại: {max(0,inv["total"]-paid):,.0f} đ'
         # Send each distinct payment once; duplicate webhook/repeated admin clicks are harmless.
-        key=f'{event}:{invoice_id}:'+ (str(paid) if event=='payment' else 'published')
+        key=f'{event}:{invoice_id}:'+ (str(paid) if event=='payment' else 'published'+revision_key)
         con.execute('''INSERT OR IGNORE INTO zalo_outbox(destination_id,invoice_id,event,event_key,message,status)
           VALUES(?,?,?,?,?,'pending')''',(dest['id'],invoice_id,event,key,msg))
 
@@ -635,7 +636,7 @@ def _invoice_png(invoice,qr=None,lines=None):
     for text in identity:label(text,dark,23,True,ypos=y);y+=34
     label(f'Số điện thoại: {phone}',dark,23,True,ypos=y+10)
     y+=91
-    item('Tiền thuê phòng',invoice['rent'])
+    item('Tiền thuê phòng '+invoice['period'],invoice['rent'])
     for code, title, prefix, unit, amount_key,usage_key,old_key,new_key in [
       ('electric','Tiền điện','Điện','kWh','electricity','electric_usage','electric_old','electric_new'),
       ('water','Tiền nước','Nước','m³','water','water_usage','water_old','water_new')]:
@@ -645,7 +646,7 @@ def _invoice_png(invoice,qr=None,lines=None):
         detail=f'Chỉ số: {meter(old)} → {meter(new)}  ·  Tiêu thụ: {meter(usage)} {unit}'
         if rate['rate'] is not None:
             detail+=f'  ·  {"Đơn giá quy đổi" if rate["estimated"] else "Đơn giá"}: {money(rate["rate"])}/{unit}'
-        item(title,invoice[amount_key],detail,94)
+        item(title+' '+(invoice.get('utility_period') or invoice['period']),invoice[amount_key],detail,94)
     if fee_details:
         for fee in fee_details:
             quantity=meter(fee['quantity'])
@@ -849,6 +850,7 @@ def invoice_image_download(ident:int,user=Depends(authorized)):
         if not accessible:fail('Không có quyền xem hóa đơn này.',404)
         invoice=_invoice(con,ident)
         if not invoice:fail('Không tìm thấy hóa đơn.',404)
+        if invoice['status']=='void':fail('Hóa đơn đã hủy không còn hiệu lực để xuất ảnh.',409)
         qr=_qr_details(con,ident)
         details=invoice_lines(con,ident)
     return Response(_invoice_png(invoice,qr,details),media_type='image/png',headers={
