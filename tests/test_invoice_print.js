@@ -16,7 +16,7 @@ assert(result.includes('Khách thuê: <strong>Trang</strong>'));
 assert(result.includes('Phòng: <strong>P01</strong>'));
 assert(result.includes('Số điện thoại: <strong>0900000000</strong>'));
 assert(result.includes('invoice-sum-balance'));
-assert(result.includes('Tổng tiền phải thanh toán</span><strong class="negative">4.268.000'));
+assert(result.includes('Tổng tiền phải thanh toán</span><strong class="negative">4,268,000'));
 assert(result.includes('<footer class="invoice-print-footer" aria-label="Cơ sở / Tòa nhà">Ngõ 303 · Tòa B</footer>'));
 context.invoice={...invoice,tenant_name:'<script>alert(1)</script>',property_name:'<img onerror="evil()">'};
 const safe=vm.runInContext('renderInvoicePaper(invoice)',context);

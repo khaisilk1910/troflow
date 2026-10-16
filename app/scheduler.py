@@ -57,6 +57,11 @@ def tick():
         process_outbox()
     except Exception:
         log.exception("Zalo outbox worker failed")
+    try:
+        from .home_assistant import sync_automatic
+        sync_automatic()
+    except Exception:
+        log.exception("Home Assistant synchronization failed")
     period=today[:7]
     for item in schedules:
         if now.day>=item['day_of_month'] and item['last_period']!=period:

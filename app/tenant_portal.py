@@ -284,6 +284,8 @@ async def tenant_submit(request:Request,contract_id:int=Form(...),period:str=For
                    (tenant_id,property_id,contract_id,room_id,period,electric_old,electric_new,water_old,water_new,electric_photo,water_photo)
                    VALUES(?,?,?,?,?,?,?,?,?,?,?)''',(t['tenant_id'],t['property_id'],contract_id,c['room_id'],period,
                    prev['electric_new'],electric_new,prev['water_new'],water_new,*files)).lastrowid
+            from .notify import enqueue_meter_submission
+            enqueue_meter_submission(con,ident)
         return {'ok':True,'id':ident,'status':'pending'}
     except Exception:
         for name in files:

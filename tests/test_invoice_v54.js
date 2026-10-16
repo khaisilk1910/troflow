@@ -6,11 +6,11 @@ const bank={configured:true,bank_name:'BIDV',holder:'NGUYEN THI NHUNG',account_n
 const lines=[{code:'electric',label:'Tiền điện',unit_price:4000,amount:1108000},{code:'water',label:'Tiền nước',unit_price:20000,amount:160000},{code:'service',label:'Wi-Fi',quantity:1,unit_price:100000,amount:100000}];
 ctx.invoice=invoice;ctx.bank=bank;ctx.lines=lines;
 const html=vm.runInContext('renderInvoicePaper(invoice,bank,lines)',ctx);
-assert.match(html,/Chỉ số cũ: <strong>19\.551<\/strong> → Chỉ số mới: <strong>19\.828<\/strong>/);
+assert.match(html,/Chỉ số cũ: <strong>19,551<\/strong> → Chỉ số mới: <strong>19,828<\/strong>/);
 assert.match(html,/Tiêu thụ: <strong>277 kWh<\/strong>/);
-assert.match(html,/Đơn giá: <strong>4\.000 ₫\/kWh<\/strong>/);
-assert.match(html,/Đơn giá: <strong>20\.000 ₫\/m³<\/strong>/);
-assert.match(html,/Wi-Fi/);assert.match(html,/1 × <strong>100\.000 ₫<\/strong>/);
+assert.match(html,/Đơn giá: <strong>4,000 ₫\/kWh<\/strong>/);
+assert.match(html,/Đơn giá: <strong>20,000 ₫\/m³<\/strong>/);
+assert.match(html,/Wi-Fi/);assert.match(html,/1 × <strong>100,000 ₫<\/strong>/);
 assert.match(html,/Tổng tiền phải thanh toán/);
 assert.match(html,/TRANG-P01-0982986102 HD00002 202610/);
 assert(!html.includes('Hạn thu'));

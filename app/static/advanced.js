@@ -2,7 +2,8 @@
 'use strict';
 const $=(q,el=document)=>el.querySelector(q);
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const money=n=>Number(n||0).toLocaleString('vi-VN')+' ₫';
+const money=n=>Number(n||0).toLocaleString('en-US')+' ₫';
+const readNum=n=>Number(n||0).toLocaleString('en-US',{maximumFractionDigits:3});
 const today=()=>new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Ho_Chi_Minh'});
 const period=()=>today().slice(0,7);
 const PAGES=[
@@ -100,7 +101,7 @@ function pageMeters(){const warnings=state.data.meterAlerts||[],rd=state.data.re
  return header('Ghi chỉ số điện nước','Ghi nhanh nhiều phòng, cảnh báo mức dùng bất thường, bổ sung ảnh công tơ.',btn('Ghi hàng loạt','meter-batch','','primary')+btn('Đổi kỳ','month-change'))+
  `<div class="note">Đang xem tất cả 12 tháng năm <b>${year}</b>. Nhập chỉ số vẫn thực hiện theo tháng, vì hóa đơn điện nước phát sinh mỗi tháng.</div>`+yearFilter+
  panel('Cảnh báo dữ liệu',`${warnings.length} cảnh báo trong kỳ`,warnings.length?warnings.map(x=>`<div class="list-row"><strong>Phòng ${esc(x.room_code)}</strong>${esc(x.message)}</div>`).join(''):'<div class="note success">Không phát hiện bất thường.</div>')+
- table(['PHÒNG / NGƯỜI THUÊ','KỲ','ĐIỆN CŨ / MỚI','NƯỚC CŨ / MỚI','ẢNH CÔNG TƠ',''],rd.filter(x=>x.period.startsWith(String(year)+'-')).map(x=>`<tr><td><strong>${esc(x.room_code)}</strong><br><small class="muted">${esc(x.property_name)} · ${tenantIdentity(x)}</small></td><td>${esc(x.period)}</td><td>${esc(x.electric_old)} → ${esc(x.electric_new)}</td><td>${esc(x.water_old)} → ${esc(x.water_new)}</td><td>${x.electric_photo?`<a href="/api/v2/files/${encodeURIComponent(x.electric_photo)}" target="_blank">Ảnh điện</a>`:'—'} ${x.water_photo?`<a href="/api/v2/files/${encodeURIComponent(x.water_photo)}" target="_blank">Ảnh nước</a>`:''}</td><td><div class="actions">${btn('Ảnh điện','meter-photo-e',x.id)}${btn('Ảnh nước','meter-photo-w',x.id)}</div></td></tr>`));
+ table(['PHÒNG / NGƯỜI THUÊ','KỲ','ĐIỆN CŨ / MỚI','NƯỚC CŨ / MỚI','ẢNH CÔNG TƠ',''],rd.filter(x=>x.period.startsWith(String(year)+'-')).map(x=>`<tr><td><strong>${esc(x.room_code)}</strong><br><small class="muted">${esc(x.property_name)} · ${tenantIdentity(x)}</small></td><td>${esc(x.period)}</td><td>${readNum(x.electric_old)} → ${readNum(x.electric_new)}</td><td>${readNum(x.water_old)} → ${readNum(x.water_new)}</td><td>${x.electric_photo?`<a href="/api/v2/files/${encodeURIComponent(x.electric_photo)}" target="_blank">Ảnh điện</a>`:'—'} ${x.water_photo?`<a href="/api/v2/files/${encodeURIComponent(x.water_photo)}" target="_blank">Ảnh nước</a>`:''}</td><td><div class="actions">${btn('Ảnh điện','meter-photo-e',x.id)}${btn('Ảnh nước','meter-photo-w',x.id)}</div></td></tr>`));
 }
 function pageInvoices(){const list=state.data.invoices||[],drafts=list.filter(x=>x.status==='draft');
  return header('Hóa đơn chuyên nghiệp','Xem trước, lập nháp, chỉnh sửa, duyệt/chốt, PDF và mã thanh toán VietQR.',btn('+ Lập nháp','invoice-new','','primary')+btn('Tính theo ngày','proration')+btn('Cập nhật','reload'))+

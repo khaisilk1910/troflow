@@ -32,7 +32,7 @@ def _admin(user):
 
 def _setting(con):
     item=one(con,'SELECT * FROM zalo_config WHERE id=1')
-    return item or {'enabled':0,'invoice_enabled':0,'payment_enabled':0,'ticket_enabled':0,'bot_url':'http://host.docker.internal:3000','account_selection':'','media_url':''}
+    return item or {'enabled':0,'invoice_enabled':0,'payment_enabled':0,'ticket_enabled':0,'reading_enabled':1,'bot_url':'http://host.docker.internal:3000','account_selection':'','media_url':''}
 
 
 def _secret_file():
@@ -263,13 +263,13 @@ def update_zalo_settings(data:dict,user=Depends(admin_user)):
     elif username and username != old_user:
         fail('Khi đổi tên đăng nhập, cần nhập mật khẩu mới.')
     with tx() as con:
-        con.execute('''INSERT INTO zalo_config(id,enabled,invoice_enabled,payment_enabled,ticket_enabled,bot_url,account_selection,media_url)
-         VALUES(1,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET enabled=excluded.enabled,
+        con.execute('''INSERT INTO zalo_config(id,enabled,invoice_enabled,payment_enabled,ticket_enabled,reading_enabled,bot_url,account_selection,media_url)
+         VALUES(1,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET enabled=excluded.enabled,
          invoice_enabled=excluded.invoice_enabled,payment_enabled=excluded.payment_enabled,
-         ticket_enabled=excluded.ticket_enabled,bot_url=excluded.bot_url,
+         ticket_enabled=excluded.ticket_enabled,reading_enabled=excluded.reading_enabled,bot_url=excluded.bot_url,
          account_selection=excluded.account_selection,media_url=excluded.media_url''',
          (int(bool(data.get('enabled'))),int(bool(data.get('invoice_enabled'))),
-          int(bool(data.get('payment_enabled'))),int(bool(data.get('ticket_enabled'))),bot_url,selection,media_url))
+          int(bool(data.get('payment_enabled'))),int(bool(data.get('ticket_enabled'))),int(bool(data.get('reading_enabled',_setting(con).get('reading_enabled',1)))),bot_url,selection,media_url))
         audit(con,user,'update','zalo_config',1)
     # Saving settings must not pretend the Bot API was reached. Check using a new session.
     return {'ok':True,'connection':_connection_status()}
@@ -299,8 +299,16 @@ def _destination_values(con,data):
             'enabled':int(bool(data.get('enabled',1))),
             'on_invoice':int(bool(data.get('on_invoice',1))),
             'on_payment':int(bool(data.get('on_payment',1))),
-            'on_ticket':int(bool(data.get('on_ticket',0)))}
+            'on_ticket':int(bool(data.get('on_ticket',0))),
+            'on_ticket_tenant':int(bool(data.get('on_ticket_tenant',0))),
+            'on_meter_submission':int(bool(data.get('on_meter_submission',0)))}
     if values['kind'] not in ('user','group'):fail('Loại nơi nhận phải là user hoặc group.')
+    if values['on_ticket_tenant'] and values['kind']=='group':
+        fail('Tin sửa chữa riêng tư của khách thuê chỉ gửi tới Zalo User, không gửi nhóm.',400)
+    if values['on_ticket_tenant'] and not values['tenant_id']:
+        fail('Thông báo sửa chữa cho khách chỉ có thể chọn với Zalo liên kết khách thuê.',400)
+    if values['on_meter_submission'] and values['tenant_id']:
+        fail('Nơi nhận chỉ số của khách phải là nơi nhận chủ nhà.',400)
     if values['on_ticket'] and values['tenant_id']:
         fail('Nơi nhận thông báo sửa chữa của chủ nhà không được gắn với khách thuê.',400)
     if not re.fullmatch(r'[0-9]{5,24}',values['thread_id']):fail('ID Zalo phải là chuỗi số từ 5–24 ký tự.')
@@ -315,7 +323,9 @@ def _welcome_message(values):
     subscribed=[]
     if values['on_invoice']:subscribed.append('Hóa đơn')
     if values['on_payment']:subscribed.append('Thanh toán')
-    if values['on_ticket']:subscribed.append('Yêu cầu sửa chữa')
+    if values['on_ticket']:subscribed.append('Yêu cầu sửa chữa gửi chủ')
+    if values['on_ticket_tenant']:subscribed.append('Tiến độ sửa chữa của tôi')
+    if values['on_meter_submission']:subscribed.append('Chỉ số khách gửi chờ duyệt')
     description=', '.join(subscribed) if subscribed else 'Chưa chọn loại thông báo tự động'
     return (f'TRỌFLOW - XÁC NHẬN NƠI NHẬN\n'
             f'Xin chào {values["name"]}!\n'
@@ -330,8 +340,8 @@ def _welcome_message(values):
 def create_destination(data:dict,background_tasks:BackgroundTasks,user=Depends(admin_user)):
     with tx() as con:
         values=_destination_values(con,data)
-        cur=con.execute('''INSERT INTO zalo_destinations(name,thread_id,kind,property_id,tenant_id,enabled,on_invoice,on_payment,on_ticket)
-          VALUES(:name,:thread_id,:kind,:property_id,:tenant_id,:enabled,:on_invoice,:on_payment,:on_ticket)''',values)
+        cur=con.execute('''INSERT INTO zalo_destinations(name,thread_id,kind,property_id,tenant_id,enabled,on_invoice,on_payment,on_ticket,on_ticket_tenant,on_meter_submission)
+          VALUES(:name,:thread_id,:kind,:property_id,:tenant_id,:enabled,:on_invoice,:on_payment,:on_ticket,:on_ticket_tenant,:on_meter_submission)''',values)
         dest_id=cur.lastrowid
         notification_id=None
         welcome_status='skipped'
@@ -357,7 +367,8 @@ def edit_destination(ident:int,data:dict,user=Depends(admin_user)):
         values=_destination_values(con,data)
         cur=con.execute('''UPDATE zalo_destinations SET name=:name,thread_id=:thread_id,kind=:kind,
           property_id=:property_id,tenant_id=:tenant_id,enabled=:enabled,on_invoice=:on_invoice,
-          on_payment=:on_payment,on_ticket=:on_ticket WHERE id=:id''',{**values,'id':ident})
+          on_payment=:on_payment,on_ticket=:on_ticket,on_ticket_tenant=:on_ticket_tenant,
+          on_meter_submission=:on_meter_submission WHERE id=:id''',{**values,'id':ident})
         if not cur.rowcount:fail('Không có nơi nhận.',404)
         audit(con,user,'update','zalo_destination',ident)
     return {'ok':True}
@@ -436,6 +447,56 @@ def enqueue_ticket_event(con, ticket_id):
           VALUES(?,?,'ticket',?,?,'pending')''',
           (d['id'],ticket_id,f'ticket:{ticket_id}',message[:1800]))
     return len(destinations)
+
+
+
+def enqueue_ticket_tenant(con,ticket_id,status_before=None):
+    """Notify only linked tenant's own repair, at creation and real status changes."""
+    config=_setting(con)
+    if not config.get('enabled') or not config.get('ticket_enabled'):return 0
+    ticket=one(con,"""SELECT k.id,k.reported_by_tenant_id,k.status,k.title,k.description,
+      r.code room_code,r.property_id FROM tickets k JOIN rooms r ON r.id=k.room_id WHERE k.id=?""",(ticket_id,))
+    if not ticket or not ticket['reported_by_tenant_id']:return 0
+    statuses={'new':'Đã tiếp nhận','in_progress':'Đang xử lý','done':'Đã hoàn thành'}
+    msg=(f'TRỌFLOW - YÊU CẦU SỬA CHỮA #{ticket_id}\n'
+       f'Phòng: {ticket["room_code"]}\nTiêu đề: {ticket["title"]}\n'
+       f'Trạng thái: {statuses.get(ticket["status"],ticket["status"])}\n'
+       f'Nội dung: {ticket["description"] or "Không có"}\n'
+       'Bạn có thể theo dõi yêu cầu tại Cổng khách thuê.')
+    key=('ticket_tenant:'+str(ticket_id)+':created' if status_before is None else
+         'ticket_tenant:'+str(ticket_id)+':status:'+datetime.now(timezone.utc).isoformat())
+    dests=rows(con,"""SELECT id FROM zalo_destinations WHERE enabled=1 AND on_ticket_tenant=1
+       AND tenant_id=? AND (property_id IS NULL OR property_id=?)""",
+       (ticket['reported_by_tenant_id'],ticket['property_id']))
+    for d in dests:
+        con.execute("""INSERT OR IGNORE INTO zalo_outbox(destination_id,ticket_id,event,event_key,message,status)
+           VALUES(?,?,'ticket_tenant',?,?,'pending')""",(d['id'],ticket_id,key,msg[:1800]))
+    return len(dests)
+
+
+def enqueue_meter_submission(con, submission_id):
+    """Notify owner destinations of the new reading submission awaiting review."""
+    cfg=_setting(con)
+    if not cfg.get('enabled') or not cfg.get('reading_enabled'):return 0
+    reading=one(con,"""SELECT s.*,t.full_name tenant_name,r.code room_code,p.name property_name
+       FROM tenant_meter_submissions s JOIN tenants t ON t.id=s.tenant_id
+       JOIN rooms r ON r.id=s.room_id JOIN properties p ON p.id=s.property_id WHERE s.id=?""",(submission_id,))
+    if not reading or reading['status']!='pending':return 0
+    fmt=lambda v:f'{v:,.3f}'.rstrip('0').rstrip('.')
+    msg=(f'TRỌFLOW - KHÁCH GỬI CHỈ SỐ ĐIỆN NƯỚC\n'
+      f'Cơ sở: {reading["property_name"]} · Phòng: {reading["room_code"]}\n'
+      f'Khách: {reading["tenant_name"]}\nKỳ: {reading["period"]}\n'
+      f'Điện: {fmt(reading["electric_old"])} → {fmt(reading["electric_new"])} kWh\n'
+      f'Nước: {fmt(reading["water_old"])} → {fmt(reading["water_new"])} m³\n'
+      'Trạng thái: Chờ quản lý xác nhận. Mở TroFlow → Duyệt chỉ số khách thuê.')
+    key=f'meter_submission:{submission_id}:'+datetime.now(timezone.utc).isoformat()
+    dests=rows(con,"""SELECT id FROM zalo_destinations WHERE enabled=1 AND tenant_id IS NULL
+       AND on_meter_submission=1 AND (property_id IS NULL OR property_id=?)""",(reading['property_id'],))
+    for d in dests:
+        con.execute("""INSERT OR IGNORE INTO zalo_outbox
+         (destination_id,submission_id,event,event_key,message,status)
+         VALUES(?,?,'meter_submission',?,?,'pending')""",(d['id'],submission_id,key,msg[:1800]))
+    return len(dests)
 
 
 def _http_json(opener,url,payload,timeout=12):
@@ -527,10 +588,10 @@ def _invoice_png(invoice,qr=None,lines=None):
         return ImageFont.truetype(bold_file if bold else font_file,size)
     W=1080; L=65; R=W-65
     dark='#152b44'; muted='#60758a'; primary='#089b8d'; red='#d84b5c'
-    def money(v):return f'{int(round(float(v or 0))):,}'.replace(',','.')+' đ'
+    def money(v):return f'{int(round(float(v or 0))):,}'+' đ'
     def meter(v):
         if v is None:return '—'
-        return f'{float(v):,.3f}'.rstrip('0').rstrip('.').replace(',','_').replace('.',',').replace('_','.')
+        return f'{float(v):,.3f}'.rstrip('0').rstrip('.')
     def wrap(draw,text,size,maximum,bold=False):
         result=[]; part=''
         for word in str(text).split():
@@ -750,6 +811,21 @@ def process_outbox(limit=6,only_ids=None):
                             con.execute('INSERT INTO ticket_media_tokens(token,photo_id,expires_at) VALUES(?,?,?)',
                                         (token,photo['id'],expiry))
                             album_urls.append(config['media_url']+'/api/integration-ticket-media/'+token)
+            if record['event']=='ticket_tenant':
+                if not config.get('ticket_enabled') or not dest.get('on_ticket_tenant') or not dest.get('tenant_id'):
+                    raise RuntimeError('Đã tắt thông báo sửa chữa cho khách hoặc nơi nhận không hợp lệ.')
+                with connect() as con:
+                    ticket=one(con,"""SELECT k.reported_by_tenant_id tenant_id,r.property_id
+                         FROM tickets k JOIN rooms r ON r.id=k.room_id WHERE k.id=?""",(record['ticket_id'],))
+                if not ticket or ticket['tenant_id']!=dest['tenant_id'] or (dest['property_id'] is not None and dest['property_id']!=ticket['property_id']):
+                    raise RuntimeError('Nơi nhận không được phép xem yêu cầu sửa chữa này.')
+            if record['event']=='meter_submission':
+                if not config.get('reading_enabled') or not dest.get('on_meter_submission') or dest.get('tenant_id'):
+                    raise RuntimeError('Đã tắt thông báo chỉ số hoặc nơi nhận không hợp lệ.')
+                with connect() as con:
+                    submission=one(con,'SELECT property_id FROM tenant_meter_submissions WHERE id=?',(record['submission_id'],))
+                if not submission or (dest['property_id'] is not None and dest['property_id']!=submission['property_id']):
+                    raise RuntimeError('Nơi nhận không được phép xem chỉ số này.')
             _bot_send(config,dest,record['message'],image_url,image_urls=album_urls)
         except Exception as exc:
             error=str(exc)[:220]

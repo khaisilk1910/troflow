@@ -343,3 +343,35 @@ def migrate_v8(con, db_path, existed_before_init=True):
     except Exception:
         con.rollback()
         raise
+
+
+def migrate_v9(con, db_path, existed_before_init=True):
+    """Encrypted HA integration mapping and provisional bill provenance."""
+    if con.execute('PRAGMA user_version').fetchone()[0] >= 9:return
+    if existed_before_init:_backup_before_upgrade(con,db_path,tag='v9')
+    con.execute('BEGIN IMMEDIATE')
+    try:
+        cols={r[1] for r in con.execute('PRAGMA table_info(utility_meter_periods)')}
+        if 'origin' not in cols:
+            con.execute("ALTER TABLE utility_meter_periods ADD COLUMN origin TEXT NOT NULL DEFAULT 'manual'")
+        con.execute('''CREATE TABLE IF NOT EXISTS ha_meter_mappings (
+            meter_id INTEGER PRIMARY KEY REFERENCES utility_meters(id) ON DELETE CASCADE,
+            old_entity TEXT NOT NULL,new_entity TEXT NOT NULL,usage_entity TEXT NOT NULL,amount_entity TEXT NOT NULL,
+            period_offset INTEGER NOT NULL DEFAULT 0 CHECK(period_offset IN (-1,0)),
+            enabled INTEGER NOT NULL DEFAULT 1,auto_sync INTEGER NOT NULL DEFAULT 0,
+            last_sync_at TEXT,last_error TEXT NOT NULL DEFAULT '',last_period TEXT,last_result TEXT)''')
+        for table, fields in {
+            'zalo_config': {'reading_enabled':'INTEGER NOT NULL DEFAULT 1'},
+            'zalo_destinations': {'on_ticket_tenant':'INTEGER NOT NULL DEFAULT 0',
+                                  'on_meter_submission':'INTEGER NOT NULL DEFAULT 0'},
+            'zalo_outbox': {'submission_id':'INTEGER REFERENCES tenant_meter_submissions(id) ON DELETE SET NULL'},
+        }.items():
+            present={r[1] for r in con.execute(f'PRAGMA table_info({table})')}
+            for column,definition in fields.items():
+                if column not in present:
+                    con.execute(f'ALTER TABLE {table} ADD COLUMN {column} {definition}')
+        con.execute('PRAGMA user_version=9')
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise

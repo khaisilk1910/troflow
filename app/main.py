@@ -1031,6 +1031,9 @@ def edit_ticket(ident:int,data:dict,user=Depends(authorized)):
         vals['resolved_at']=(old['resolved_at'] or date.today().isoformat()) if vals['status']=='done' else None
         update(con,'tickets',ident,vals)
         audit(con,user,'update','ticket',ident)
+        if old['status']!=vals['status']:
+            from .notify import enqueue_ticket_tenant
+            enqueue_ticket_tenant(con,ident,old['status'])
     return json_ok()
 
 @app.delete('/api/tickets/{ident}')
@@ -1301,3 +1304,6 @@ app.include_router(tenant_portal_router)
 
 from .repairs import router as repairs_router
 app.include_router(repairs_router)
+
+from .home_assistant import router as ha_router
+app.include_router(ha_router)

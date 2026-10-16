@@ -122,7 +122,7 @@ def connect():
 
 
 def init_db():
-    from .migrations import migrate, migrate_v6, migrate_v7, migrate_v8, restore_pending
+    from .migrations import migrate, migrate_v6, migrate_v7, migrate_v8, migrate_v9, restore_pending
     existing = DB_PATH.exists()
     restore_pending(DB_PATH)
     with connect() as con:
@@ -133,6 +133,7 @@ def init_db():
         migrate_v6(con, DB_PATH, existing and version_before >= 5)
         migrate_v7(con, DB_PATH, existing and version_before >= 6)
         migrate_v8(con, DB_PATH, existing and version_before >= 7)
+        migrate_v9(con, DB_PATH, existing and version_before >= 8)
 
 
 @contextmanager

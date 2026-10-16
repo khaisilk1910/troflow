@@ -124,7 +124,7 @@ def edit_bill(ident:int,data:dict,user=Depends(authorized)):
             if not old:fail('Không tìm thấy kỳ công tơ.',404)
             require_meter(con,user,old['meter_id'])
             require_meter(con,user,mid)
-            con.execute('UPDATE utility_meter_periods SET meter_id=?, '+','.join(k+'=?' for k in val)+',updated_at=CURRENT_TIMESTAMP WHERE id=?',(mid,*val.values(),ident))
+            con.execute('UPDATE utility_meter_periods SET meter_id=?, '+','.join(k+'=?' for k in val)+",origin='manual',updated_at=CURRENT_TIMESTAMP WHERE id=?",(mid,*val.values(),ident))
             audit(con,user,'update','utility_bill',ident,f"old_meter={old['meter_id']} old_period={old['period']}")
     except sqlite3.IntegrityError:fail('Công tơ đã có dữ liệu kỳ này (trùng tháng/năm).',409)
     return json_ok()

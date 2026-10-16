@@ -2,8 +2,8 @@
 
 const $ = selector => document.querySelector(selector);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-const currency = value => (Number(value) || 0).toLocaleString('vi-VN') + ' đ';
-const num = value => (Number(value) || 0).toLocaleString('vi-VN', {maximumFractionDigits:3});
+const currency = value => (Number(value) || 0).toLocaleString('en-US') + ' đ';
+const num = value => (Number(value) || 0).toLocaleString('en-US', {maximumFractionDigits:3});
 const dateText = value => /^\d{4}-\d{2}-\d{2}$/.test(String(value || '')) ? `${value.slice(8,10)}/${value.slice(5,7)}/${value.slice(0,4)}` : (value ? esc(value) : '—');
 const periodText = value => /^\d{4}-\d{2}$/.test(String(value || '')) ? `${value.slice(5,7)}/${value.slice(0,4)}` : esc(value || '—');
 const monthNow = () => {const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;};

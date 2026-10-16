@@ -101,6 +101,8 @@ async def tenant_create_ticket(title:str=Form(...),category:str=Form('other'),
             _store_photos(con,ident,photos,created)
             from .notify import enqueue_ticket_event
             enqueue_ticket_event(con,ident)
+            from .notify import enqueue_ticket_tenant
+            enqueue_ticket_tenant(con,ident)
         return {'id':ident,'status':'new','photos':len(created),'queued':True}
     except Exception:
         _cleanup(created)
@@ -172,6 +174,9 @@ async def staff_edit_ticket(ident:int,room_id:int=Form(...),title:str=Form(...),
             update(con,'tickets',ident,vals)
             _store_photos(con,ident,photos,created)
             audit(con,user,'update','ticket',ident)
+            if old['status']!=vals['status']:
+                from .notify import enqueue_ticket_tenant
+                enqueue_ticket_tenant(con,ident,old['status'])
         return {'ok':True,'photos_added':len(created)}
     except Exception:
         _cleanup(created)
