@@ -48,7 +48,7 @@ class V4IntegrationTests(unittest.TestCase):
   self.req('PUT',f'readings/{id1}',{**self.reader,'period':'2026-09'},409)
  def test_tenant_meter_photos_and_version(self):
   with db.connect() as con:
-   self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],10)
+   self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],11)
    self.assertIn('photo_path',{r[1] for r in con.execute('PRAGMA table_info(tenants)')})
   id1=self.req('POST','readings',self.reader).json()['id']
   for category,ref in [('tenant',self.tenant),('electric',id1),('water',id1)]:

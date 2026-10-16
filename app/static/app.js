@@ -544,7 +544,7 @@ document.addEventListener('click',async e=>{
  if(action==='add-bill'&&can('utilitymeters.record'))openUtilityForm('bill');
  if(action==='edit-bill'&&can('utilitymeters.record'))openUtilityForm('bill',id);
  if(action==='delete-meter'&&can('utilitymeters.delete'))openConfirm('Xóa công tơ','Chỉ xóa được công tơ chưa có dữ liệu kỳ ghi.',async()=>{try{await api('utility-meters/'+id,'DELETE');closeModal();await loadUtilityData();renderPage();toast('Đã xóa công tơ.');}catch(e){toast(e.message,true);}});
- if(action==='delete-bill'&&can('utilitymeters.deletebill'))openConfirm('Xóa kỳ nhà cung cấp','Chỉ xóa được kỳ chưa ghi nhận thanh toán; thao tác này được lưu nhật ký.',async()=>{try{await api('utility-bills/'+id,'DELETE');closeModal();await loadUtilityData();renderPage();toast('Đã xóa kỳ.');}catch(e){toast(e.message,true);}});
+ if(action==='delete-bill'&&can('utilitymeters.deletebill'))openConfirm('Xóa kỳ nhà cung cấp','Xóa vĩnh viễn kỳ nhà cung cấp và ảnh hưởng số liệu thống kê. Admin được xóa cả kỳ đã trả tiền. Thao tác sẽ được lưu nhật ký.',async()=>{try{await api('utility-bills/'+id,'DELETE');closeModal();await loadUtilityData();renderPage();toast('Đã xóa kỳ.');}catch(e){toast(e.message,true);}});
  return;
  }
  if(target.dataset.invoiceReissue){openReissueInvoice(target.dataset.invoiceReissue);return;}
@@ -664,9 +664,9 @@ function pageUtilityMeters(){
  ${metric('TIỀN ĐÃ THU ƯỚC TÍNH',compact(sums.customer_collected_est)+' ₫','meter','Khoản điện nước phân bổ từ thanh toán')}
  </div>`+
  `<div class="card" style="margin-bottom:20px"><div class="toolbar"><strong>Danh sách công tơ của cơ sở</strong><span class="count">${meters.length} công tơ</span></div>`+
- table(['CƠ SỞ / CÔNG TƠ','LOẠI','MÃ KHÁCH HÀNG','NHÀ CUNG CẤP','TRẠNG THÁI',''],meters.map(m=>`<tr><td><strong>${esc(m.property_name)}</strong><div class="cell-sub">${esc(m.label||m.meter_number)} · Số: ${esc(m.meter_number)}</div>${haByMeter[m.id]?`<div class="cell-sub" style="color:${haByMeter[m.id].last_error?'#b54747':'#0b998e'}">HA ${haByMeter[m.id].auto_sync?'· Tự động':'· Thủ công'}${haByMeter[m.id].last_period?' · Kỳ '+esc(haByMeter[m.id].last_period):''}${haByMeter[m.id].last_error?' · Lỗi: '+esc(haByMeter[m.id].last_error):''}</div>`:''}</td><td>${m.kind==='electric'?'⚡ Điện':'💧 Nước'}</td><td><strong>${esc(m.customer_code)}</strong></td><td>${esc(m.supplier||'—')}</td><td>${m.active?badge('active'):badge('inactive')}</td><td><div class="table-actions">${state.user?.role==='admin'&&m.kind==='electric'?`<button data-utility="ha-meter" data-id="${m.id}" title="Cấu hình Home Assistant">HA</button><button data-utility="ha-sync" data-id="${m.id}" title="Đồng bộ Home Assistant">${ic('refresh')}</button>`:''}${can('utilitymeters.edit')?`<button data-utility="edit-meter" data-id="${m.id}" title="Sửa công tơ">${ic('edit')}</button>`:''}${can('utilitymeters.delete')&&!m.bill_count?`<button class="delete" data-utility="delete-meter" data-id="${m.id}" title="Xóa công tơ chưa có lịch sử">${ic('trash')}</button>`:''}</div></td></tr>`),meters.length,'Chưa có công tơ','Tạo công tơ điện/nước theo từng cơ sở hoặc tòa nhà.')+'</div>'+
+ table(['CƠ SỞ / CÔNG TƠ','LOẠI','MÃ KHÁCH HÀNG','NHÀ CUNG CẤP','TRẠNG THÁI',''],meters.map(m=>`<tr><td><strong>${esc(m.property_name)}</strong><div class="cell-sub">${esc(m.label||m.meter_number)} · Số: ${esc(m.meter_number)}</div>${haByMeter[m.id]?`<div class="cell-sub" style="color:${haByMeter[m.id].last_error?'#b54747':'#0b998e'}">HA ${haByMeter[m.id].auto_sync?'· Tự động':'· Thủ công'}${haByMeter[m.id].last_period?' · Kỳ '+esc(haByMeter[m.id].last_period):''}${haByMeter[m.id].last_error?' · Lỗi: '+esc(haByMeter[m.id].last_error):''}</div>`:''}</td><td>${m.kind==='electric'?'⚡ Điện':'💧 Nước'}</td><td><strong>${esc(m.customer_code)}</strong></td><td>${esc(m.supplier||'—')}</td><td>${m.active?badge('active'):badge('inactive')}</td><td><div class="table-actions">${state.user?.role==='admin'?`<button data-utility="ha-meter" data-id="${m.id}" title="Cấu hình Home Assistant">HA</button><button data-utility="ha-sync" data-id="${m.id}" title="Đồng bộ Home Assistant">${ic('refresh')}</button>`:''}${can('utilitymeters.edit')?`<button data-utility="edit-meter" data-id="${m.id}" title="Sửa công tơ">${ic('edit')}</button>`:''}${can('utilitymeters.delete')&&!m.bill_count?`<button class="delete" data-utility="delete-meter" data-id="${m.id}" title="Xóa công tơ chưa có lịch sử">${ic('trash')}</button>`:''}</div></td></tr>`),meters.length,'Chưa có công tơ','Tạo công tơ điện/nước theo từng cơ sở hoặc tòa nhà.')+'</div>'+
  `<div class="card" style="margin-bottom:20px"><div class="toolbar"><strong>Sản lượng và hóa đơn nhà cung cấp — ${state.utilityYear}</strong><span class="count">${bills.length} kỳ</span></div>`+
- table(['KỲ TIÊU THỤ / CƠ SỞ','CÔNG TƠ','CHỈ SỐ ĐẦU → CUỐI','SẢN LƯỢNG TÍNH TIỀN','PHẢI TRẢ','ĐÃ TRẢ',''],bills.map(b=>`<tr><td><strong>${monthVN(b.period)}</strong><div class="cell-sub">${esc(b.property_name)}</div></td><td>${esc(b.kind==='electric'?'Điện':'Nước')} · ${esc(b.meter_number)}<div class="cell-sub">Mã KH: ${esc(b.customer_code)}</div></td><td>${Number(b.reading_old).toLocaleString('en-US')} → ${Number(b.reading_new).toLocaleString('en-US')}</td><td>${Number(b.billed_usage).toLocaleString('en-US')} ${b.kind==='electric'?'kWh':'m³'}</td><td>${amount(b.bill_amount)}${b.origin==='home_assistant'?'<div class="cell-sub">HA · tạm tính</div>':''}</td><td>${amount(b.paid_amount)}</td><td><div class="table-actions">${can('utilitymeters.record')?`<button data-utility="edit-bill" data-id="${b.id}" title="Chỉnh sửa kỳ">${ic('edit')}</button>`:''}${can('utilitymeters.deletebill')&&!b.paid_amount?`<button class="delete" data-utility="delete-bill" data-id="${b.id}" title="Xóa kỳ">${ic('trash')}</button>`:''}</div></td></tr>`),bills.length,'Chưa có kỳ công tơ','Kỳ thể hiện tháng đã tiêu thụ, không phải tháng thanh toán.')+'</div>'+
+ table(['KỲ TIÊU THỤ / CƠ SỞ','CÔNG TƠ','CHỈ SỐ ĐẦU → CUỐI','SẢN LƯỢNG TÍNH TIỀN','PHẢI TRẢ','ĐÃ TRẢ',''],bills.map(b=>`<tr><td><strong>${monthVN(b.period)}</strong><div class="cell-sub">${esc(b.property_name)}</div></td><td>${esc(b.kind==='electric'?'Điện':'Nước')} · ${esc(b.meter_number)}<div class="cell-sub">Mã KH: ${esc(b.customer_code)}</div></td><td>${Number(b.reading_old).toLocaleString('en-US')} → ${Number(b.reading_new).toLocaleString('en-US')}</td><td>${Number(b.billed_usage).toLocaleString('en-US')} ${b.kind==='electric'?'kWh':'m³'}</td><td>${amount(b.bill_amount)}${b.origin==='home_assistant'?`<div class="cell-sub">${b.note?.includes('đã chốt')?'HA · đã chốt':b.kind==='water'?'HA · kỳ trước':'HA · tạm tính'}</div>`:''}</td><td>${amount(b.paid_amount)}</td><td><div class="table-actions">${can('utilitymeters.record')?`<button data-utility="edit-bill" data-id="${b.id}" title="Chỉnh sửa kỳ">${ic('edit')}</button>`:''}${can('utilitymeters.deletebill')&&(!b.paid_amount||state.user?.role==='admin')?`<button class="delete" data-utility="delete-bill" data-id="${b.id}" title="Xóa kỳ">${ic('trash')}</button>`:''}</div></td></tr>`),bills.length,'Chưa có kỳ công tơ','Kỳ thể hiện tháng đã tiêu thụ, không phải tháng thanh toán.')+'</div>'+
  (can('utilitymeters.report')?`<div class="card"><div class="toolbar"><strong>Thống kê chênh lệch điện nước ${state.utilityYear}</strong><span class="count">${entries.length} kỳ/cơ sở</span></div>`+
  table(['KỲ TIÊU THỤ / CƠ SỞ','KHÁCH ĐƯỢC TÍNH','NHÀ CUNG CẤP TÍNH','LÃI/LỖ DỒN TÍCH','ƯỚC TÍNH ĐÃ THU','THỰC TRẢ','CHÊNH LỆCH TIỀN'],entries.map(x=>`<tr><td><strong>${monthVN(x.period)}</strong><div class="cell-sub">${esc(x.property_name)}</div>${x.missing_electric_bill||x.missing_water_bill?`<div class="cell-sub negative">Thiếu kỳ ${x.missing_electric_bill?'điện ':''}${x.missing_water_bill?'nước':''}</div>`:''}</td><td>${amount(x.customer_billed)}<div class="cell-sub">Điện ${amount(x.electric_billed)} · Nước ${amount(x.water_billed)}</div></td><td>${amount(x.supplier_charged)}<div class="cell-sub">Điện ${amount(x.electric_charged)} · Nước ${amount(x.water_charged)}</div></td><td class="${x.accrual_margin<0?'negative':'positive'}">${amount(x.accrual_margin)}</td><td>${amount(x.customer_collected_est)}</td><td>${amount(x.supplier_paid)}</td><td class="${x.cash_difference_est<0?'negative':'positive'}">${amount(x.cash_difference_est)}</td></tr>`),entries.length,'Chưa có số liệu đối soát','So sánh điện nước trên hóa đơn khách tháng sau với công tơ tổng của tháng tiêu thụ này.')+
  `<div class="modal-hint utility-disclaimer">${esc(report.method||'')}</div><div class="modal-hint utility-disclaimer">Không nhập lặp số tiền hóa đơn nhà cung cấp vào Chi phí vận hành nếu đã dùng báo cáo này để đối soát, tránh cộng trùng khi tổng hợp thủ công.</div></div>`:'') ;
@@ -689,7 +689,7 @@ async function saveUtility(form){if(busy)return;busy=true;const ctx=modalContext
 }
 
 
-// Home Assistant integration for electricity supplier master meters.
+// Home Assistant integration for electric and water supplier master meters.
 async function openHaConfig(){
  if(state.user?.role!=='admin')return;
  try{
@@ -707,21 +707,37 @@ async function openHaConfig(){
 async function openHaMeter(id){
  if(state.user?.role!=='admin')return;
  const meter=(state.data.utilitymeters||[]).find(m=>m.id===Number(id));
- if(!meter || meter.kind!=='electric')return;
+ if(!meter)return;
+ const water=meter.kind==='water';
  const current=(state.data.hamappings||[]).find(m=>m.meter_id===meter.id)||{};
- const values={period_offset:0,enabled:1,auto_sync:0,...current};
+ const values={period_offset:water?-1:0,enabled:1,auto_sync:0,...current};
  modalContext={type:'ha-meter',id:meter.id};
- const fields=[
+ const fields=water?[
+  F('old_entity','Chỉ số trước kỳ mới nhất (m³)','text',{required:true,full:true,placeholder:'sensor.nuoc_chi_so_truoc_ky_moi_nhat'}),
+  F('new_entity','Chỉ số sau kỳ mới nhất (m³)','text',{required:true,full:true,placeholder:'sensor.nuoc_chi_so_sau_ky_moi_nhat'}),
+  F('usage_entity','Tiêu thụ kỳ mới nhất (m³)','text',{required:true,full:true,placeholder:'sensor.nuoc_tieu_thu_ky_moi_nhat'}),
+  F('amount_entity','Tiền nước kỳ mới nhất (VND)','text',{required:true,full:true,placeholder:'sensor.nuoc_tien_nuoc_ky_moi_nhat'}),
+  F('paid_on_entity','Ngày thanh toán','text',{required:true,full:true,placeholder:'sensor.nuoc_ngay_thanh_toan'}),
+  F('paid_amount_entity','Đã thanh toán kỳ hóa đơn (VND)','text',{required:true,full:true,placeholder:'sensor.nuoc_da_thanh_toan_ky_hoa_don'})
+ ]:[
   F('old_entity','Chỉ số đầu kỳ / cuối kỳ trước (kWh)','text',{required:true,full:true,placeholder:'sensor.chi_so_cuoi_ky_truoc'}),
   F('new_entity','Chỉ số cuối kỳ / tạm chốt (kWh)','text',{required:true,full:true,placeholder:'sensor.chi_so_tam_chot'}),
-  F('usage_entity','Sản lượng tháng (kWh)','text',{required:true,full:true,placeholder:'sensor.tieu_thu_ky_nay'}),
-  F('amount_entity','Tiền điện tháng (VND)','text',{required:true,full:true,placeholder:'sensor.tien_dien_ky_nay'}),
-  F('period_offset','Gán dữ liệu vào kỳ','select',{full:true,options:[opt(0,'Tháng hiện tại'),opt(-1,'Tháng trước')]}),
-  F('enabled','Trạng thái kết nối công tơ','select',{options:[opt(1,'Bật'),opt(0,'Tắt')]}),
-  F('auto_sync','Tự đồng bộ mỗi giờ','select',{options:[opt(0,'Tắt (chỉ đồng bộ thủ công)'),opt(1,'Bật')]}),
+  F('usage_entity','Sản lượng kỳ hiện tại (kWh)','text',{required:true,full:true,placeholder:'sensor.tieu_thu_ky_nay'}),
+  F('amount_entity','Tiền điện kỳ hiện tại (VND)','text',{required:true,full:true,placeholder:'sensor.tien_dien_ky_nay'}),
+  F('prev_usage_entity','Tiêu thụ kỳ trước (kWh)','text',{full:true,placeholder:'sensor.tieu_thu_ky_truoc'}),
+  F('prev_amount_entity','Tiền điện kỳ trước (VND)','text',{full:true,placeholder:'sensor.tien_dien_ky_truoc'}),
+  F('prev_end_entity','Chỉ số cuối kỳ trước (kWh) — bỏ trống để dùng chỉ số đầu kỳ hiện tại','text',{full:true,placeholder:'sensor.chi_so_cuoi_ky_truoc'}),
+  F('period_offset','Gán dữ liệu tạm tính vào kỳ','select',{full:true,options:[opt(0,'Tháng hiện tại (khuyến nghị)'),opt(-1,'Tháng trước — chế độ cũ, không tự chốt kỳ trước')]})
  ];
- openModal(`Home Assistant · ${meter.meter_number}`,`<form id="ha-meter-form"><div class="form-grid">${fields.map(f=>fieldHTML(f,values)).join('')}</div>
- <div class="modal-hint">Nhập đúng 4 Entity ID từ Developer Tools → States. Dùng dấu chấm thập phân trong giá trị sensor. Dữ liệu nhập là tạm tính, chưa phải hóa đơn EVN; không ghi đè kỳ nhập tay/đã thanh toán. Cần chọn đúng kỳ: sensor đang báo tháng nào thì chọn tháng đó.</div>
+ fields.push(
+  F('enabled','Trạng thái kết nối công tơ','select',{options:[opt(1,'Bật'),opt(0,'Tắt')]}),
+  F('auto_sync','Tự đồng bộ mỗi giờ','select',{options:[opt(0,'Tắt (chỉ đồng bộ thủ công)'),opt(1,'Bật')]})
+ );
+ const hint=water?
+  'Nước: ngày 6–12 đầu tháng, chỉ gán chỉ số đã THAY ĐỔI so với lần đồng bộ trước vào tháng trước (ví dụ tháng 10 → kỳ 09). Lần đầu chỉ lưu mốc so sánh; không đoán kỳ của dữ liệu cũ. Sau ngày 12 chỉ cập nhật thông tin thanh toán cho kỳ đã đồng bộ, không chuyển chỉ số. Ngày thanh toán: YYYY-MM-DD hoặc DD/MM/YYYY. Dữ liệu sửa tay không bị ghi đè.':
+  'Điện: tháng hiện tại lưu tạm tính. Ngày 1–7, khi Chỉ số đầu kỳ/cuối kỳ trước thay đổi, dùng sản lượng + tiền kỳ trước để chốt kỳ trước. Chỉ số đầu kỳ trước = chỉ số cuối kỳ trước − tiêu thụ kỳ trước. Lần đầu chỉ lấy mốc so sánh; bản ghi sửa tay hoặc đã thanh toán không bị ghi đè. Hãy cấu hình cả hai sensor kỳ trước để tự chốt.';
+ openModal(`Home Assistant · ${meter.meter_number} · ${water?'Nước':'Điện'}`,`<form id="ha-meter-form"><div class="form-grid">${fields.map(f=>fieldHTML(f,values)).join('')}</div>
+ <div class="modal-hint">${hint}</div>
  ${values.last_error?`<div class="modal-hint" style="color:#b54747">Lỗi lần trước: ${esc(values.last_error)}</div>`:''}
  <div id="ha-meter-result" role="status"></div></form>`,
  `<button type="button" class="btn btn-outline" data-utility="ha-preview" data-id="${id}">Xem trước (sensor đã lưu)</button>
@@ -730,9 +746,21 @@ async function openHaMeter(id){
 async function haSyncMeter(id){
  if(state.user?.role!=='admin')return;
  try{
+  const meter=(state.data.utilitymeters||[]).find(m=>m.id===Number(id));
   const out=await api('ha/sync/'+Number(id),'POST',{});
-  const msg=out.result==='skipped_manual'?'Kỳ này đã nhập thủ công hoặc đã trả tiền. Không ghi đè.':
-   `Đã đồng bộ ${out.period}: ${out.billed_usage.toLocaleString('en-US')} kWh, ${amount(out.bill_amount)}.`;
+  const unit=meter?.kind==='water'?'m³':'kWh';
+  let msg=out.result==='skipped_manual'?'Kỳ này đã được chỉnh thủ công hoặc đã thanh toán, không ghi đè.':
+   out.result==='waiting_change'?'Đã lưu giá trị sensor làm mốc. Chờ nhà cung cấp thay đổi chỉ số để ghi kỳ trước.':
+   out.result==='outside_window'?'Nước: ngoài ngày 6–12, không gán chỉ số vào tháng trước.':
+   out.result==='unchanged'?'Các sensor chưa thay đổi, không cập nhật kỳ nhà cung cấp.':
+   out.result==='payment_updated'?'Đã cập nhật thanh toán nước của kỳ trước.':
+   out.result==='skipped_deleted'?'Kỳ này đã được Admin xóa nên không tự động tạo lại.':
+   out.result==='skipped_payment_decrease'?'Không giảm số tiền đã thanh toán từ sensor; vui lòng kiểm tra thủ công.':
+   `Đã đồng bộ ${out.period}: ${out.billed_usage.toLocaleString('en-US')} ${unit}, ${amount(out.bill_amount)}.`;
+  if(out.previous_result==='updated'||out.previous_result==='created')msg+=` Đã chốt điện kỳ ${out.previous.period} (${amount(out.previous.bill_amount)}).`;
+  else if(out.previous_result==='waiting_change')msg+=' Sensor kỳ trước đã được lưu làm mốc, chờ thay đổi.';
+  else if(out.previous_result==='skipped_manual')msg+=' Kỳ trước đã nhập tay hoặc thanh toán, không ghi đè.';
+  else if(out.previous_result==='skipped_deleted')msg+=' Kỳ trước đã xóa, không tự động tạo lại.';
   await loadUtilityData();renderPage();toast(msg);
  }catch(err){toast(err.message,true);}
 }
@@ -754,7 +782,7 @@ async function haTestOrPreview(action,id){
   const out=action==='ha-test'?await api('ha/test'):await api('ha/preview/'+Number(id),'POST',{});
   const target=document.getElementById(action==='ha-test'?'ha-connect-result':'ha-meter-result');
   if(target)target.textContent=out.ok?(action==='ha-test'?out.message:
-  `Kỳ ${out.period}: ${out.reading_old.toLocaleString('en-US')} → ${out.reading_new.toLocaleString('en-US')} kWh; sản lượng ${out.billed_usage.toLocaleString('en-US')} kWh; tiền ${amount(out.bill_amount)}.`):out.message;
+  `Kỳ ${out.period}: ${out.reading_old.toLocaleString('en-US')} → ${out.reading_new.toLocaleString('en-US')}; sản lượng ${out.billed_usage.toLocaleString('en-US')}; tiền ${amount(out.bill_amount)}.${out.previous?' Kỳ điện trước '+out.previous.period+': '+out.previous.reading_old.toLocaleString('en-US')+' → '+out.previous.reading_new.toLocaleString('en-US')+', '+amount(out.previous.bill_amount)+'.':''}${out.paid_amount?' Đã trả: '+amount(out.paid_amount)+', ngày '+out.paid_on+'.':''}`):out.message;
   if(!out.ok)toast(out.message,true);
  }catch(err){toast(err.message,true);}
 }

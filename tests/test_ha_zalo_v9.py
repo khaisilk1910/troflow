@@ -94,7 +94,7 @@ class UpgradeV9(unittest.TestCase):
         self.api('PUT','ha/mappings/'+str(self.meter),{**self.mapping(),'old_entity':'http://malicious/'},expected=400)
         db.init_db()
         with db.connect() as con:
-            self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],10)
+            self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],11)
             self.assertEqual(con.execute('PRAGMA integrity_check').fetchone()[0],'ok')
             for table in ('ha_meter_mappings','utility_meter_periods','zalo_outbox'):
                 self.assertTrue(db.one(con,"SELECT name FROM sqlite_master WHERE name=?",(table,)))

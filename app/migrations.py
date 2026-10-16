@@ -400,3 +400,32 @@ def migrate_v10(con, db_path, existed_before_init=True):
     except Exception:
         con.rollback()
         raise
+
+
+def migrate_v11(con, db_path, existed_before_init=True):
+    """Water HA feeds, finalized prior EVN period, and observed sensor baselines."""
+    if con.execute('PRAGMA user_version').fetchone()[0] >= 11:return
+    if existed_before_init:_backup_before_upgrade(con,db_path,tag='v11')
+    con.execute('BEGIN IMMEDIATE')
+    try:
+        columns={r[1] for r in con.execute('PRAGMA table_info(ha_meter_mappings)')}
+        for name,definition in {
+            'prev_usage_entity':"TEXT NOT NULL DEFAULT ''",
+            'prev_amount_entity':"TEXT NOT NULL DEFAULT ''",
+            'prev_end_entity':"TEXT NOT NULL DEFAULT ''",
+            'paid_on_entity':"TEXT NOT NULL DEFAULT ''",
+            'paid_amount_entity':"TEXT NOT NULL DEFAULT ''",
+            'last_snapshot':"TEXT NOT NULL DEFAULT ''",
+        }.items():
+            if name not in columns:
+                con.execute(f'ALTER TABLE ha_meter_mappings ADD COLUMN {name} {definition}')
+        con.execute('''CREATE TABLE IF NOT EXISTS ha_period_deletions (
+            meter_id INTEGER NOT NULL REFERENCES utility_meters(id) ON DELETE CASCADE,
+            period TEXT NOT NULL,deleted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            PRIMARY KEY(meter_id,period))''')
+        con.execute('PRAGMA user_version=11')
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise

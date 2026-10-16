@@ -126,7 +126,7 @@ class TenantIsolationTests(unittest.TestCase):
  def test_migration_idempotent(self):
   db.init_db();db.init_db()
   with db.connect() as con:
-   self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],10)
+   self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],11)
    self.assertEqual(con.execute('PRAGMA integrity_check').fetchone()[0],'ok')
    self.assertEqual(con.execute('SELECT COUNT(*) FROM tenants').fetchone()[0],2)
  def test_owner_photo_requires_public_consent(self):

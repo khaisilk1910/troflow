@@ -39,7 +39,7 @@ class V5Tests(unittest.TestCase):
    con.execute('PRAGMA user_version=4')
   db.init_db()
   with db.connect() as con:
-   self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],10)
+   self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],11)
    self.assertEqual(con.execute("SELECT id_number FROM tenants WHERE full_name='Hồ sơ cũ'").fetchone()[0],'')
    self.assertIn('id_back_path',{x[1] for x in con.execute('PRAGMA table_info(tenants)')})
    self.assertEqual(con.execute('PRAGMA integrity_check').fetchone()[0],'ok')
@@ -67,7 +67,9 @@ class V5Tests(unittest.TestCase):
   b=self.call('POST','utility-bills',self.new_bill(first,paid_amount=100000,paid_on='2026-06-17'))['id']
   self.call('POST','utility-bills',self.new_bill(first),409)
   self.call('DELETE',f'utility-meters/{first}',status=409)
-  self.call('DELETE',f'utility-bills/{b}',status=409)
+  # Admin may delete even a historic supplier period with recorded payment.
+  self.call('DELETE',f'utility-bills/{b}')
+  b=self.call('POST','utility-bills',self.new_bill(first,paid_amount=0))['id']
   self.call('PUT',f'utility-bills/{b}',self.new_bill(first,paid_amount=0),200)
   self.call('PUT',f'utility-bills/{b}',self.new_bill(first,period='2026-07',paid_amount=0))
   self.assertEqual(self.call('GET','utility-bills?year=2026')[0]['period'],'2026-07')

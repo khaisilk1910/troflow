@@ -110,6 +110,7 @@ def add_bill(data:dict,user=Depends(authorized)):
             meter=require_meter(con,user,mid)
             if not meter['active']:fail('Công tơ đã ngừng sử dụng.',409)
             ident=con.execute('INSERT INTO utility_meter_periods(meter_id,'+','.join(val)+') VALUES (?,'+','.join('?' for _ in val)+')',(mid,*val.values())).lastrowid
+            con.execute('DELETE FROM ha_period_deletions WHERE meter_id=? AND period=?',(mid,val['period']))
             audit(con,user,'create','utility_bill',ident,f"meter={mid} period={val['period']}")
     except sqlite3.IntegrityError:
         fail('Công tơ đã có dữ liệu tháng/năm này, vui lòng sửa bản ghi cũ.',409)
@@ -135,10 +136,14 @@ def delete_bill(ident:int,user=Depends(authorized)):
         old=one(con,'SELECT * FROM utility_meter_periods WHERE id=?',(ident,))
         if not old:fail('Không tìm thấy kỳ ghi.',404)
         require_meter(con,user,old['meter_id'])
-        if old['paid_amount']:
-            fail('Kỳ đã ghi nhận tiền trả nhà cung cấp. Phải điều chỉnh về 0 và lưu nhật ký trước khi xóa.',409)
+        if old['paid_amount'] and user['role']!='admin':
+            fail('Chỉ Admin được xóa kỳ đã ghi nhận thanh toán cho nhà cung cấp.',403)
         con.execute('DELETE FROM utility_meter_periods WHERE id=?',(ident,))
-        audit(con,user,'delete','utility_bill',ident,old['period'])
+        if one(con,'SELECT 1 FROM ha_meter_mappings WHERE meter_id=?',(old['meter_id'],)):
+            con.execute('INSERT INTO ha_period_deletions(meter_id,period,user_id) VALUES(?,?,?) ON CONFLICT(meter_id,period) DO UPDATE SET deleted_at=CURRENT_TIMESTAMP,user_id=excluded.user_id',
+                        (old['meter_id'],old['period'],user['id']))
+        audit(con,user,'delete','utility_bill',ident,
+              f"meter={old['meter_id']} period={old['period']} charged={old['bill_amount']} paid={old['paid_amount']} paid_on={old['paid_on']} origin={old['origin']}")
     return json_ok()
 
 @router.get('/utility-report')

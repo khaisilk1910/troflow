@@ -68,7 +68,7 @@ class RepairV8(unittest.TestCase):
         with db.connect() as con:con.execute('PRAGMA user_version=7')
         db.init_db()
         with db.connect() as con:
-            self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],10)
+            self.assertEqual(con.execute('PRAGMA user_version').fetchone()[0],11)
             self.assertEqual(con.execute('PRAGMA integrity_check').fetchone()[0],'ok')
             self.assertTrue(con.execute('SELECT id FROM tickets WHERE id=?',(old,)).fetchone())
             self.assertEqual(con.execute('SELECT ticket_enabled FROM zalo_config').fetchone()[0],0)

@@ -6,4 +6,12 @@ const html=vm.runInContext(`(()=>{state.user={role:'admin'};state.data={properti
 for(const required of ['data-utility="ha-config"','data-utility="ha-meter"','data-utility="ha-sync"','4,523.87','3,860.67','2,113,344','HA · tạm tính','HA · Tự động'])assert(html.includes(required),required);
 assert.equal(vm.runInContext('amount(2113344)',ctx),'2,113,344 ₫');
 assert.equal(vm.runInContext('readNum(4523.87)',ctx),'4,523.87');
-console.log('Home Assistant UI: actions, indicators, periods and decimal grouping OK');
+// Water meters must receive the same HA actions and six explicit sensor inputs.
+ctx.openModal=(title,html)=>{ctx.haTitle=title;ctx.haHtml=html};
+vm.runInContext("state.data.utilitymeters.push({id:5,kind:'water',property_name:'Ngõ 303',meter_number:'W01',customer_code:'W303',active:1,bill_count:0});openHaMeter(5)",ctx);
+for(const field of ['Chỉ số trước kỳ mới nhất','Chỉ số sau kỳ mới nhất','Tiêu thụ kỳ mới nhất','Tiền nước kỳ mới nhất','Ngày thanh toán','Đã thanh toán kỳ hóa đơn'])
+ assert(ctx.haHtml.includes(field),field);
+const waterHtml=vm.runInContext('pageUtilityMeters()',ctx);
+assert(waterHtml.includes('data-utility="ha-meter" data-id="5"'),'HA config on water meter');
+assert(waterHtml.includes('data-utility="ha-sync" data-id="5"'),'HA sync on water meter');
+console.log('Home Assistant UI: electric/water actions, six water sensors, periods and decimal grouping OK');

@@ -1,3 +1,7 @@
+# TrọFlow V5.11 — đồng bộ Home Assistant điện/nước và chốt kỳ nhà cung cấp
+
+Xem **[README-V5.11-HA-WATER-EVN.md](README-V5.11-HA-WATER-EVN.md)** để cấu hình sensor, giải thích tháng tiêu thụ, ngày chốt, quyền xóa lịch sử và hướng dẫn nâng cấp an toàn.
+
 # TrọFlow 5.7 — Yêu cầu sửa chữa và Zalo album
 
 Xem **README-V5.7.md** để triển khai và vận hành bản cập nhật, các ghi chú ở bản cũ vẫn có giá trị.
